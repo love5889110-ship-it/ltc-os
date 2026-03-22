@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local config (settings stored in DB, not file)
+src/config/
+
 # vercel
 .vercel
 
