@@ -31,9 +31,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/dashboard')
-      .then((r) => r.json())
-      .then((d) => { setData(d); setLoading(false) })
+    const load = () => fetch('/api/dashboard').then((r) => r.json()).then((d) => { setData(d); setLoading(false) })
+    load()
+    const timer = setInterval(load, 30000)
+    return () => clearInterval(timer)
   }, [])
 
   if (loading) return (

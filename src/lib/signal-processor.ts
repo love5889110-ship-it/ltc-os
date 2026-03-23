@@ -1,9 +1,11 @@
 import { minimaxChat } from '@/lib/minimax'
 import { db } from '@/db'
-import { signalEvents, signalBindings, customers, contacts, opportunities } from '@/db/schema'
+import { signalEvents, signalBindings, customers, contacts, opportunities, opportunityWorkspaces } from '@/db/schema'
+import { eq } from 'drizzle-orm'
 import { generateId } from '@/lib/utils'
 import type { SignalType, BindingCandidate } from '@/types'
 import { getAISettings } from '@/lib/ai-settings'
+import { triggerSignalAgent } from '@/lib/stage-engine'
 
 
 interface NormalizeResult {
@@ -203,12 +205,23 @@ export async function ingestSignal(params: {
       bindingConfidence: topCandidate.confidence,
       bindingCandidatesJson: candidates,
     })
-    await db
-      .update(signalEvents)
-      .set({ status: 'bound' })
-      .where(
-        (await import('drizzle-orm')).eq(signalEvents.id, signalId)
-      )
+    await db.update(signalEvents).set({ status: 'bound' }).where(eq(signalEvents.id, signalId))
+
+    // S1 fix: 高优先级信号自动绑定后，立即触发 sales_copilot 分析
+    if (normalized.priority >= 4 && topCandidate.type === 'opportunity') {
+      const workspace = await db.query.opportunityWorkspaces.findFirst({
+        where: eq(opportunityWorkspaces.opportunityId, topCandidate.id),
+      })
+      if (workspace) {
+        const opp = await db.query.opportunities.findFirst({ where: eq(opportunities.id, topCandidate.id) })
+        triggerSignalAgent(workspace.id, signalId, {
+          currentStage: workspace.currentStage ?? undefined,
+          healthScore: workspace.healthScore,
+          riskScore: workspace.riskScore,
+          opportunity: opp ? { id: opp.id, name: opp.name, stage: opp.stage, amount: opp.amount } : undefined,
+        })
+      }
+    }
   } else if (candidates.length > 0) {
     await db.insert(signalBindings).values({
       id: generateId(),
@@ -217,12 +230,7 @@ export async function ingestSignal(params: {
       bindingConfidence: topCandidate?.confidence ?? 0,
       bindingCandidatesJson: candidates,
     })
-    await db
-      .update(signalEvents)
-      .set({ status: 'pending_confirm' })
-      .where(
-        (await import('drizzle-orm')).eq(signalEvents.id, signalId)
-      )
+    await db.update(signalEvents).set({ status: 'pending_confirm' }).where(eq(signalEvents.id, signalId))
   }
 
   return { signalId, candidates, normalized }

@@ -60,6 +60,17 @@ export async function GET(
     limit: 10,
   })
 
+  // 为每个待审批动作附加来源 Agent 类型
+  const pendingActionsWithAgent = await Promise.all(
+    pendingActions.map(async (action) => {
+      if (!action.runId) return { ...action, agentType: null }
+      const run = await db.query.agentRuns.findFirst({ where: eq(agentRuns.id, action.runId) })
+      if (!run?.threadId) return { ...action, agentType: null }
+      const thread = await db.query.agentThreads.findFirst({ where: eq(agentThreads.id, run.threadId) })
+      return { ...action, agentType: thread?.agentType ?? null }
+    })
+  )
+
   const lastSnapshot = workspace.lastSnapshotId
     ? await db.query.stateSnapshots.findFirst({
         where: eq(stateSnapshots.id, workspace.lastSnapshotId),
@@ -86,7 +97,7 @@ export async function GET(
     opportunity: opp,
     customer,
     threads: threadDetails,
-    pendingActions,
+    pendingActions: pendingActionsWithAgent,
     lastSnapshot,
     recentSignals,
   })

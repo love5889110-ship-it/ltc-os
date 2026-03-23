@@ -29,6 +29,8 @@ const CONNECTOR_META: Record<string, { label: string; description: string }> = {
   manual: { label: '手动录入', description: '通过界面手动录入信号' },
 }
 
+const STUB_CONNECTORS = new Set(['recording', 'dingtalk', 'file_ocr', 'wechat_proxy'])
+
 export default function ConnectorsPage() {
   const [connectors, setConnectors] = useState<Connector[]>([])
   const [loading, setLoading] = useState(true)
@@ -164,9 +166,15 @@ export default function ConnectorsPage() {
             const result = syncResult[connector.connectorType]
             const isSyncing = syncing === connector.connectorType
             const isGetNote = connector.connectorType === 'get_note'
+            const isStub = STUB_CONNECTORS.has(connector.connectorType)
 
             return (
-              <div key={connector.id} className={`bg-white rounded-xl border p-5 ${!connector.enabled ? 'opacity-60' : ''}`}>
+              <div key={connector.id} className={`bg-white rounded-xl border p-5 relative ${!connector.enabled ? 'opacity-60' : ''}`}>
+                {isStub && (
+                  <span className="absolute top-3 right-3 text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-medium">
+                    即将上线
+                  </span>
+                )}
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <p className="font-medium text-sm">{connector.connectorName}</p>
@@ -232,6 +240,10 @@ export default function ConnectorsPage() {
                 )}
 
                 <div className="mt-3 pt-3 border-t flex gap-2">
+                  {isStub ? (
+                    <p className="text-xs text-gray-400 italic w-full text-center py-1">集成功能开发中，敬请期待</p>
+                  ) : (
+                    <>
                   {isGetNote && connector.authStatus === 'authorized' && (
                     <button
                       onClick={() => handleSync('get_note')}
@@ -250,6 +262,8 @@ export default function ConnectorsPage() {
                     <Settings className="w-3 h-3" />
                     {connector.authStatus === 'authorized' ? '重新配置' : '配置'}
                   </button>
+                    </>
+                  )}
                 </div>
               </div>
             )

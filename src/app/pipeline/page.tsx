@@ -43,7 +43,11 @@ export default function PipelinePage() {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    const timer = setInterval(load, 30000)
+    return () => clearInterval(timer)
+  }, [])
 
   const sorted = [...items].sort((a, b) => {
     if (sortBy === 'health') return (b.healthScore ?? 0) - (a.healthScore ?? 0)

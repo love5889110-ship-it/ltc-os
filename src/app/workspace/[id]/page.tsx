@@ -31,6 +31,7 @@ interface WorkspaceDetail {
     actionType: string
     actionStatus: string
     actionPriority: number | null
+    agentType: string | null
     actionPayloadJson: { title?: string; description?: string; draft?: string } | null
     createdAt: string | null
   }>
@@ -352,6 +353,11 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
                           </span>
                           {action.actionPriority && action.actionPriority >= 4 && (
                             <span className="text-xs text-red-500">P{action.actionPriority}</span>
+                          )}
+                          {action.agentType && (
+                            <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                              来自：{AGENT_LABELS[action.agentType] ?? action.agentType}
+                            </span>
                           )}
                         </div>
                         <p className="text-xs text-gray-600">

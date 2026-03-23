@@ -13,6 +13,7 @@ interface Draft {
   content: string
   draftStatus: 'pending_review' | 'approved' | 'sent' | 'archived'
   reviewNote: string | null
+  recipientInfo: { channel?: string; to?: string } | null
   createdAt: string | null
 }
 
@@ -169,6 +170,24 @@ export default function DraftsPage() {
 
                   {isExpanded && (
                     <div className="px-4 pb-4 space-y-3">
+                      {/* Send guidance for approved drafts */}
+                      {draft.draftStatus === 'approved' && (
+                        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-700">
+                          <Send className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span>
+                            请通过{' '}
+                            <span className="font-medium">
+                              {draft.recipientInfo?.channel
+                                ? { email: '邮件', wechat: '微信', dingtalk: '钉钉', phone: '电话' }[draft.recipientInfo.channel] ?? draft.recipientInfo.channel
+                                : '适当渠道'}
+                            </span>
+                            {draft.recipientInfo?.to && (
+                              <> 发送给 <span className="font-medium">{draft.recipientInfo.to}</span></>
+                            )}
+                            ，发送后点击「已发送」标记状态
+                          </span>
+                        </div>
+                      )}
                       {/* Inline editable textarea */}
                       <textarea
                         value={currentContent}

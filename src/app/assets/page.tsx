@@ -96,6 +96,16 @@ export default function AssetsPage() {
     load()
   }
 
+  const handleRate = async (id: string, current: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    await fetch(`/api/assets/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qualityScore: Math.min(current + 0.1, 1.0) }),
+    })
+    load()
+  }
+
   const typeStats = Object.keys(TYPE_CONFIG).map((type) => ({
     type: type as AssetType,
     count: assets.filter((a) => a.assetType === type).length,
@@ -226,6 +236,15 @@ export default function AssetsPage() {
                               {t}
                             </span>
                           ))}
+                        </div>
+                        <div className="flex items-center justify-between mt-2">
+                          <span className="text-xs text-gray-400">质量分 {(asset.qualityScore * 100).toFixed(0)}</span>
+                          <button
+                            onClick={(e) => handleRate(asset.id, asset.qualityScore, e)}
+                            className="text-xs text-green-600 bg-green-50 hover:bg-green-100 px-2 py-0.5 rounded flex items-center gap-1"
+                          >
+                            👍 有用
+                          </button>
                         </div>
                       </div>
                     </div>

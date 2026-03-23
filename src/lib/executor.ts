@@ -10,6 +10,7 @@ import {
   stateSnapshots,
   opportunityWorkspaces,
   opportunities,
+  customers,
   tasks,
   drafts,
   assets,
@@ -132,13 +133,26 @@ async function executeCreateTask(
   runId?: string
 ): Promise<Record<string, unknown>> {
   const taskId = generateId()
+
+  // 查询商机和客户名称，写入任务描述前缀，方便任务中心展示上下文
+  let contextPrefix = ''
+  const ws = await db.query.opportunityWorkspaces.findFirst({ where: eq(opportunityWorkspaces.id, workspaceId) })
+  if (ws) {
+    const opp = await db.query.opportunities.findFirst({ where: eq(opportunities.id, ws.opportunityId) })
+    if (opp) {
+      const customer = await db.query.customers.findFirst({ where: eq(customers.id, opp.customerId) })
+      contextPrefix = `[${customer?.name ?? ''}·${opp.name}] `
+    }
+  }
+
+  const originalDesc = (payload.description as string) ?? null
   await db.insert(tasks).values({
     id: taskId,
     workspaceId,
     runId: runId ?? null,
     actionId,
     title: (payload.title as string) ?? '未命名任务',
-    description: (payload.description as string) ?? null,
+    description: originalDesc ? `${contextPrefix}${originalDesc}` : (contextPrefix || null),
     assignedTo: (payload.assignee as string) ?? null,
     priority: (payload.priority as number) ?? 3,
     taskStatus: 'pending',
@@ -348,13 +362,16 @@ async function executeNotify(
     errorMessage,
   })
 
+  // 飞书发送失败时抛出异常，让上层 executeAction 记录为 failed
+  if (deliveryStatus === 'failed') {
+    throw new Error(`飞书通知发送失败：${errorMessage}`)
+  }
+
   return {
     status: deliveryStatus,
     channel,
     message: channel === 'feishu' && deliveryStatus === 'sent'
       ? '通知已发送至飞书'
-      : channel === 'feishu' && deliveryStatus === 'failed'
-      ? `飞书发送失败：${errorMessage}`
       : '通知已记录（未配置飞书 Webhook）',
   }
 }
@@ -392,6 +409,11 @@ async function executeCreateCollab(
     deliveryStatus,
     errorMessage,
   })
+
+  // 飞书发送失败时抛出异常，让上层 executeAction 记录为 failed
+  if (deliveryStatus === 'failed') {
+    throw new Error(`飞书协作请求发送失败：${errorMessage}`)
+  }
 
   return {
     status: deliveryStatus,
