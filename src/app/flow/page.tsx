@@ -216,6 +216,14 @@ export default function FlowPage() {
     failedActions: number
     skillCount: number
   } | null>(null)
+  // Recent execution logs for ticker
+  const [recentLogs, setRecentLogs] = useState<Array<{ agentLabel: string; workspaceName: string; actionTitle: string; status: string }>>([
+    { agentLabel: '销售 Agent', workspaceName: '大同煤矿项目', actionTitle: '生成差异化方案草稿', status: 'done' },
+    { agentLabel: '招标 Agent', workspaceName: '阳光电源项目', actionTitle: '识别控标风险', status: 'risk' },
+    { agentLabel: '解决方案 Agent', workspaceName: '国能集团项目', actionTitle: '输出技术方案建议', status: 'done' },
+    { agentLabel: '商务 Agent', workspaceName: '华润电力项目', actionTitle: '生成报价草稿', status: 'done' },
+    { agentLabel: '销售 Agent', workspaceName: '中煤能源项目', actionTitle: '竞争对手动态分析', status: 'risk' },
+  ])
   // Journey state
   const [journeyStep, setJourneyStep] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -224,8 +232,10 @@ export default function FlowPage() {
   const [activeAgent, setActiveAgent] = useState<string | null>(null)
   // Role guide state
   const [selectedRole, setSelectedRole] = useState<RoleKey>('sales')
-  // Animated dot position for signal flow
-  const [animDot, setAnimDot] = useState(0)
+  // Multi-particle animation for signal flow (3 particles staggered)
+  const [animDots, setAnimDots] = useState([0, 3, 6])
+  // Random running agent simulation
+  const [runningAgentIdxs, setRunningAgentIdxs] = useState<number[]>([0])
 
   useEffect(() => {
     if (!isPlaying) return
@@ -239,12 +249,28 @@ export default function FlowPage() {
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [isPlaying, journeyStep])
 
-  // Signal flow dot animation
+  // Multi-particle signal flow animation (3 particles staggered across SIGNAL_FLOW.length+3 positions)
   useEffect(() => {
     if (activeTab !== 'overview') return
     const interval = setInterval(() => {
-      setAnimDot((d) => (d + 1) % (SIGNAL_FLOW.length + 2))
-    }, 800)
+      setAnimDots(prev => prev.map(d => (d + 1) % (SIGNAL_FLOW.length + 3)))
+    }, 600)
+    return () => clearInterval(interval)
+  }, [activeTab])
+
+  // Agent running state simulation (rotate 1-2 agents every 4 seconds)
+  useEffect(() => {
+    if (activeTab !== 'overview') return
+    const interval = setInterval(() => {
+      const total = AGENTS_DATA.length
+      const count = Math.random() > 0.4 ? 2 : 1
+      const idxs: number[] = []
+      while (idxs.length < count) {
+        const r = Math.floor(Math.random() * total)
+        if (!idxs.includes(r)) idxs.push(r)
+      }
+      setRunningAgentIdxs(idxs)
+    }, 4000)
     return () => clearInterval(interval)
   }, [activeTab])
 
@@ -272,6 +298,21 @@ export default function FlowPage() {
           failedActions: 0,
           skillCount,
         })
+        // Extract recent execution logs for ticker
+        const AGENT_LABELS: Record<string, string> = {
+          sales: '销售 Agent', presales_assistant: '解决方案 Agent',
+          tender_assistant: '招标 Agent', handover: '交付 Agent',
+          risk_monitor: '风险 Agent', renewal_manager: '续约 Agent', general_assistant: '通用 Agent',
+        }
+        const logs = workspaces.flatMap((w: any) =>
+          (w.recentCompletedActions ?? []).map((a: any) => ({
+            agentLabel: AGENT_LABELS[a.agentType] ?? a.agentType,
+            workspaceName: w.name ?? '未知项目',
+            actionTitle: a.title ?? a.actionType,
+            status: a.actionStatus === 'failed' ? 'risk' : 'done',
+          }))
+        ).slice(0, 10)
+        if (logs.length > 0) setRecentLogs(logs)
       } catch { /* ignore */ }
     }
     fetchStatus()
@@ -290,6 +331,16 @@ export default function FlowPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      <style>{`
+        @keyframes ticker-scroll {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        @keyframes fadeslide {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
       <Breadcrumb items={[{ label: '治理配置' }, { label: '系统地图' }]} />
       <PageGuide
         storageKey="flow"
@@ -450,6 +501,7 @@ export default function FlowPage() {
         <div className="space-y-4">
           {/* [P1-13] Live system status bar */}
           {liveStatus && (
+            <>
             <div className="bg-gray-900 rounded-xl px-4 py-3 flex items-center gap-6 text-sm">
               <span className="text-gray-400 text-xs font-medium">实时运行状态</span>
               <div className="flex items-center gap-1.5">
@@ -483,7 +535,33 @@ export default function FlowPage() {
               )}
               <span className="text-gray-600 text-xs ml-auto">每30秒刷新</span>
             </div>
+            {/* 执行日志滚动条 */}
+            {recentLogs.length > 0 && (
+              <div className="overflow-hidden bg-gray-900/80 rounded-lg px-3 py-1.5 flex items-center gap-2">
+                <span className="text-[10px] text-gray-500 flex-shrink-0 font-mono">实时日志</span>
+                <div className="overflow-hidden flex-1 relative h-4">
+                  <div
+                    className="flex gap-6 absolute whitespace-nowrap"
+                    style={{ animation: 'ticker-scroll 28s linear infinite' }}
+                  >
+                    {[...recentLogs, ...recentLogs].map((log, idx) => (
+                      <span key={idx} className="text-[11px] flex-shrink-0">
+                        <span className="text-cyan-400">{log.agentLabel}</span>
+                        <span className="text-gray-500 mx-1">·</span>
+                        <span className="text-gray-300">{log.workspaceName}</span>
+                        <span className="text-gray-500 mx-1">·</span>
+                        <span className={log.status === 'risk' ? 'text-orange-400' : 'text-green-400'}>
+                          {log.actionTitle} {log.status === 'risk' ? '⚡' : '✓'}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            </>
           )}
+
           {/* 角色图例 */}
           <div className="flex items-center gap-5 text-xs text-gray-500 mb-1">
             <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" />人工操作（显示耗时）</div>
@@ -505,7 +583,7 @@ export default function FlowPage() {
                 const isHybrid = node.role === 'hybrid'
                 const bgColor = isHuman ? 'bg-amber-50 border-amber-200' : isHybrid ? 'bg-indigo-50 border-indigo-200' : 'bg-blue-50 border-blue-200'
                 const iconBg = isHuman ? 'bg-amber-400' : isHybrid ? 'bg-indigo-500' : 'bg-blue-500'
-                const isAnimated = animDot === i
+                const isAnimated = animDots.some(d => d === i)
                 return (
                   <div key={node.id} className="flex items-start flex-1 min-w-0">
                     <button
@@ -529,8 +607,8 @@ export default function FlowPage() {
                     </button>
                     {i < SIGNAL_FLOW.length - 1 && (
                       <div className="flex items-center justify-center w-5 pt-4 flex-shrink-0 relative">
-                        <ArrowRight className={`w-3 h-3 transition-colors duration-300 ${animDot === i ? 'text-blue-400' : 'text-gray-300'}`} />
-                        {animDot === i && (
+                        <ArrowRight className={`w-3 h-3 transition-colors duration-300 ${animDots.some(d => d === i || d === i + 1) ? 'text-blue-400' : 'text-gray-300'}`} />
+                        {animDots.some(d => d === i) && (
                           <span className="absolute w-1.5 h-1.5 bg-blue-400 rounded-full animate-ping" style={{ top: '14px' }} />
                         )}
                       </div>
@@ -585,13 +663,18 @@ export default function FlowPage() {
                 </div>
                 <div className="text-xs text-gray-400 mb-1">7个专业Agent并行运行</div>
                 <div className="grid grid-cols-2 gap-1.5 w-full">
-                  {AGENTS_DATA.slice(0, 6).map(a => (
-                    <div key={a.type} className={`text-xs px-2 py-1 rounded-lg text-center ${a.lightBg} ${a.textColor} border ${a.border}`}>
-                      {a.label}
-                    </div>
-                  ))}
+                  {AGENTS_DATA.slice(0, 6).map((a, idx) => {
+                    const isRunning = runningAgentIdxs.includes(idx)
+                    return (
+                      <div key={a.type} className={`text-xs px-2 py-1 rounded-lg text-center relative ${a.lightBg} ${a.textColor} border ${a.border} ${isRunning ? 'ring-1 ring-green-300' : ''}`}>
+                        {isRunning && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-green-400 animate-pulse" />}
+                        {a.label}
+                      </div>
+                    )
+                  })}
                 </div>
-                <div className={`text-xs px-2 py-1 rounded-lg text-center w-full ${AGENTS_DATA[6].lightBg} ${AGENTS_DATA[6].textColor} border ${AGENTS_DATA[6].border}`}>
+                <div className={`text-xs px-2 py-1 rounded-lg text-center w-full relative ${AGENTS_DATA[6].lightBg} ${AGENTS_DATA[6].textColor} border ${AGENTS_DATA[6].border} ${runningAgentIdxs.includes(6) ? 'ring-1 ring-green-300' : ''}`}>
+                  {runningAgentIdxs.includes(6) && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-green-400 animate-pulse" />}
                   {AGENTS_DATA[6].label}
                 </div>
                 <div className="flex gap-1 mt-1">
@@ -771,7 +854,7 @@ export default function FlowPage() {
           </div>
 
           {/* 当前步骤详情 */}
-          <div className={`rounded-xl border-2 p-5 transition-all duration-300 ${
+          <div key={journeyStep} className={`rounded-xl border-2 p-5 transition-all duration-300 animate-[fadeslide_0.25s_ease-out] ${
             currentStep.role === 'human' ? 'bg-amber-50 border-amber-200' :
             currentStep.role === 'ai' ? 'bg-blue-50 border-blue-200' :
             'bg-indigo-50 border-indigo-200'
