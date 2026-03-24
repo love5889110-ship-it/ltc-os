@@ -1,9 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { ClipboardList, CheckCircle, Clock, AlertCircle, RefreshCw } from 'lucide-react'
 import { formatRelativeTime } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 interface Task {
   id: string
@@ -34,9 +37,18 @@ const PRIORITY_COLOR: Record<number, string> = {
 }
 
 export default function TasksPage() {
+  const router = useRouter()
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [onlyMine, setOnlyMine] = useState(false)
+  const [currentRole, setCurrentRole] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    const role = typeof window !== 'undefined' ? localStorage.getItem('ltc_role') : null
+    setCurrentRole(role)
+  }, [])
 
   const load = async () => {
     setLoading(true)
@@ -50,7 +62,7 @@ export default function TasksPage() {
 
   useEffect(() => { load() }, [])
 
-  const updateStatus = async (taskId: string, taskStatus: Task['taskStatus']) => {
+  const updateStatus = async (taskId: string, taskStatus: Task['taskStatus'], workspaceId?: string) => {
     setUpdatingId(taskId)
     await fetch('/api/tasks', {
       method: 'PATCH',
@@ -58,8 +70,24 @@ export default function TasksPage() {
       body: JSON.stringify({ taskId, taskStatus }),
     })
     setUpdatingId(null)
-    load()
+    // [P2-3] Toast feedback
+    if (taskStatus === 'done') {
+      setToast('任务已完成 ✓ 跳转到战场查看后续分析')
+      setTimeout(() => setToast(null), 3000)
+      if (workspaceId) router.push(`/workspace/${workspaceId}`)
+      else load()
+    } else if (taskStatus === 'cancelled') {
+      setToast('任务已取消')
+      setTimeout(() => setToast(null), 3000)
+      load()
+    } else {
+      load()
+    }
   }
+
+  const filteredTasks = onlyMine && currentRole
+    ? tasks.filter((t) => t.assignedTo === currentRole)
+    : tasks
 
   const columns: Task['taskStatus'][] = ['pending', 'in_progress', 'done']
 
@@ -67,26 +95,61 @@ export default function TasksPage() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* [P2-3] Toast notification */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
+          {toast}
+        </div>
+      )}
       <div className="bg-white border-b px-6 py-4">
-        <div className="flex items-center gap-2">
-          <ClipboardList className="w-5 h-5 text-blue-600" />
-          <h1 className="text-lg font-semibold">任务中心</h1>
-          <span className="text-xs text-gray-400 ml-2">AI 数字员工产生的待办任务</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ClipboardList className="w-5 h-5 text-blue-600" />
+            <h1 className="text-lg font-semibold">待办任务</h1>
+            <span className="text-xs text-gray-400 ml-2">AI 数字员工产生的待办任务</span>
+          </div>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <span className="text-xs text-gray-500">仅看我的</span>
+            <button
+              onClick={() => setOnlyMine(v => !v)}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${onlyMine ? 'bg-blue-600' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${onlyMine ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+            </button>
+          </label>
         </div>
         <div className="flex gap-4 mt-2 text-xs text-gray-500">
-          <span>全部 {tasks.length}</span>
-          <span className="text-orange-500">待处理 {tasks.filter(t => t.taskStatus === 'pending').length}</span>
-          <span className="text-blue-500">进行中 {tasks.filter(t => t.taskStatus === 'in_progress').length}</span>
-          <span className="text-green-500">已完成 {tasks.filter(t => t.taskStatus === 'done').length}</span>
+          <span>全部 {filteredTasks.length}</span>
+          <span className="text-orange-500">待处理 {filteredTasks.filter(t => t.taskStatus === 'pending').length}</span>
+          <span className="text-blue-500">进行中 {filteredTasks.filter(t => t.taskStatus === 'in_progress').length}</span>
+          <span className="text-green-500">已完成 {filteredTasks.filter(t => t.taskStatus === 'done').length}</span>
         </div>
       </div>
 
       <div className="flex-1 overflow-auto p-6">
+        <Breadcrumb items={[{ label: '动作处理' }, { label: '待办任务' }]} />
         <PageGuide
-          role="全员"
-          what="AI 数字员工在分析商机时创建的待办任务（拜访客户、提交资料、内部协作等）"
-          firstStep="查看「待处理」列，找到分配给自己的任务，点击「开始」并在完成后标记为「完成」"
           storageKey="tasks"
+          contents={{
+            sales: {
+              roleLabel: '销售',
+              purpose: 'AI 为你拆解的跟进任务看板',
+              whenToUse: '每天早上或刚审批完动作后来这里',
+              aiAlreadyDid: '已将商机推进动作拆解为具体待办任务并分配',
+              youDecide: '找到分配给你的任务，执行后标记完成',
+              nextStepLabel: '返回战场总览',
+              nextStepHref: '/workspace',
+            },
+            all: {
+              roleLabel: '全员',
+              purpose: 'AI 拆解的任务执行看板',
+              whenToUse: '需要查看或处理自己的任务时',
+              aiAlreadyDid: '已创建任务并分配给对应角色',
+              youDecide: '执行任务，完成后标记',
+              nextStepLabel: '返回战场总览',
+              nextStepHref: '/workspace',
+            },
+          }}
         />
         {tasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-gray-400">
@@ -98,7 +161,7 @@ export default function TasksPage() {
           <div className="grid grid-cols-3 gap-6">
             {columns.map((status) => {
               const cfg = STATUS_CONFIG[status]
-              const colTasks = tasks.filter((t) => t.taskStatus === status)
+              const colTasks = filteredTasks.filter((t) => t.taskStatus === status)
               return (
                 <div key={status} className="bg-gray-50 rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-3">
@@ -123,9 +186,27 @@ export default function TasksPage() {
                         {task.assignedTo && (
                           <p className="text-xs text-gray-400 mb-1">👤 {task.assignedTo}</p>
                         )}
+                        {task.workspaceId && (
+                          <Link
+                            href={`/workspace/${task.workspaceId}`}
+                            className="inline-flex items-center text-[10px] text-blue-500 hover:text-blue-700 hover:underline mb-1"
+                          >
+                            ↩ 来源战场：{task.workspaceId.slice(-6)}
+                          </Link>
+                        )}
                         <p className="text-xs text-gray-400 mb-2">
                           {formatRelativeTime(task.createdAt)}
                         </p>
+                        {/* [P2-2] Show dueDate with overdue highlight */}
+                        {task.dueDate && task.taskStatus !== 'done' && task.taskStatus !== 'cancelled' && (() => {
+                          const isOverdue = new Date(task.dueDate) < new Date()
+                          return (
+                            <p className={`text-xs mb-2 ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                              {isOverdue ? '⚠ 已逾期 ' : '截止 '}
+                              {new Date(task.dueDate).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+                            </p>
+                          )
+                        })()}
                         <div className="flex gap-1.5">
                           {status === 'pending' && (
                             <button
@@ -138,7 +219,7 @@ export default function TasksPage() {
                           )}
                           {status === 'in_progress' && (
                             <button
-                              onClick={() => updateStatus(task.id, 'done')}
+                              onClick={() => updateStatus(task.id, 'done', task.workspaceId)}
                               disabled={updatingId === task.id}
                               className="flex-1 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
                             >

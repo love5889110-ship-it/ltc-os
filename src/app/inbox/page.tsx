@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Inbox, Filter, RefreshCw, Plus, CheckCircle, XCircle, Link2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { Radio, RefreshCw, Plus, CheckCircle, XCircle, Link2, Upload, FileText, Image, X, Plug, ChevronDown, Inbox, Square, CheckSquare } from 'lucide-react'
 import {
   SIGNAL_TYPE_LABELS,
   SIGNAL_STATUS_LABELS,
@@ -10,10 +11,12 @@ import {
   formatRelativeTime,
 } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 interface Signal {
   id: string
   sourceType: string
+  rawContent: string | null
   contentSummary: string | null
   signalType: string | null
   priority: number | null
@@ -21,6 +24,14 @@ interface Signal {
   status: string
   eventTime: string | null
   createdAt: string | null
+  parsedEntitiesJson?: {
+    keyPoints?: string[]
+    riskFlags?: string[]
+    customerNames?: string[]
+    competitorMentions?: string[]
+    amounts?: string[]
+    deadlines?: string[]
+  } | null
   binding?: {
     bindingStatus: string
     bindingConfidence: number | null
@@ -34,16 +45,45 @@ const TYPE_FILTERS = ['all', 'demand', 'risk', 'opportunity', 'blocker', 'escala
 export default function InboxPage() {
   const [signals, setSignals] = useState<Signal[]>([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('pending_confirm')
   const [typeFilter, setTypeFilter] = useState('all')
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null)
   const [showIngest, setShowIngest] = useState(false)
+  const [showIngestDropdown, setShowIngestDropdown] = useState(false)
   const [ingestText, setIngestText] = useState('')
   const [ingestSource, setIngestSource] = useState('get_note')
   const [ingesting, setIngesting] = useState(false)
   const [confirmingSignal, setConfirmingSignal] = useState<Signal | null>(null)
   const [allOpportunities, setAllOpportunities] = useState<{ id: string; name: string }[]>([])
   const [selectedOppId, setSelectedOppId] = useState('')
+  const [oppSearchQ, setOppSearchQ] = useState('')
+  const [createMode, setCreateMode] = useState(false)
+  const [newCustomerName, setNewCustomerName] = useState('')
+  const [newOppName, setNewOppName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createdWorkspaceId, setCreatedWorkspaceId] = useState<string | null>(null)
+  const [showUpload, setShowUpload] = useState(false)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadLabel, setUploadLabel] = useState('other')
+  const [uploading, setUploading] = useState(false)
+  const [uploadResult, setUploadResult] = useState<{ summary?: string; fileName?: string; extractedLength?: number } | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
+  const [autoSync, setAutoSync] = useState(false)
+  const [autoSyncInterval, setAutoSyncInterval] = useState(30)
+  const [autoSyncSaving, setAutoSyncSaving] = useState(false)
+  const [autoSyncSaved, setAutoSyncSaved] = useState(false)
+  const [showSyncPanel, setShowSyncPanel] = useState(false)
+  const [syncKeyword, setSyncKeyword] = useState('')
+  const [syncResult, setSyncResult] = useState<{ synced: number; skipped: number } | null>(null)
+  const [ignoringSignalId, setIgnoringSignalId] = useState<string | null>(null)
+  const [ignoreReason, setIgnoreReason] = useState('')
+  const [confirmedWorkspaceId, setConfirmedWorkspaceId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const router = useRouter()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -56,7 +96,51 @@ export default function InboxPage() {
     setLoading(false)
   }, [statusFilter, typeFilter])
 
-  useEffect(() => { load() }, [load])
+  const loadLastSync = useCallback(async () => {
+    const res = await fetch('/api/connectors/get-note/sync')
+    const data = await res.json()
+    if (data.lastSyncAt) setLastSyncAt(data.lastSyncAt)
+    // Also load auto-sync settings
+    const sRes = await fetch('/api/settings')
+    const sData = await sRes.json()
+    if (sData.getNoteAutoSync !== undefined) setAutoSync(sData.getNoteAutoSync)
+    if (sData.getNoteAutoSyncInterval) setAutoSyncInterval(sData.getNoteAutoSyncInterval)
+  }, [])
+
+  useEffect(() => { load(); loadLastSync() }, [load, loadLastSync])
+
+  const handleSyncGetNote = async (keyword?: string) => {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/connectors/get-note/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: keyword?.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setSyncResult({ synced: data.synced, skipped: data.skipped })
+      }
+      await load()
+      await loadLastSync()
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const handleSaveAutoSync = async () => {
+    setAutoSyncSaving(true)
+    setAutoSyncSaved(false)
+    await fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ getNoteAutoSync: autoSync, getNoteAutoSyncInterval: autoSyncInterval }),
+    })
+    setAutoSyncSaving(false)
+    setAutoSyncSaved(true)
+    setTimeout(() => setAutoSyncSaved(false), 3000)
+  }
 
   const handleConfirm = async (signalId: string, opportunityId?: string) => {
     await fetch(`/api/signals/${signalId}`, {
@@ -68,10 +152,70 @@ export default function InboxPage() {
     setSelectedSignal(null)
     setConfirmingSignal(null)
     setSelectedOppId('')
+    setCreateMode(false)
+    setNewCustomerName('')
+    setNewOppName('')
+    setCreatedWorkspaceId(null)
+    // Show "进入战场" toast if we have an opportunityId
+    if (opportunityId) {
+      try {
+        const wsRes = await fetch(`/api/workspaces?limit=100`)
+        const wsData = await wsRes.json()
+        const ws = (wsData.workspaces ?? []).find((w: any) => w.workspace?.opportunityId === opportunityId || w.opportunityId === opportunityId)
+        const wsId = ws?.workspace?.id ?? ws?.id
+        if (wsId) setConfirmedWorkspaceId(wsId)
+      } catch { /* ignore */ }
+    }
+  }
+
+  const handleConfirmAndCreateWorkspace = async () => {
+    if (!confirmingSignal) return
+    setCreating(true)
+    try {
+      // 1. Create opportunity (+ customer if needed)
+      const oppRes = await fetch('/api/opportunities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newOppName.trim(), customerName: newCustomerName.trim() }),
+      })
+      const oppData = await oppRes.json()
+      if (!oppData.opportunityId) throw new Error('创建商机失败')
+
+      // 2. Create workspace
+      const wsRes = await fetch('/api/workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opportunityId: oppData.opportunityId }),
+      })
+      const wsData = await wsRes.json()
+
+      // 3. Bind signal
+      await fetch(`/api/signals/${confirmingSignal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'confirm', opportunityId: oppData.opportunityId }),
+      })
+
+      load()
+      setSelectedSignal(null)
+      setConfirmingSignal(null)
+      setCreateMode(false)
+      setNewCustomerName('')
+      setNewOppName('')
+      if (wsData.workspaceId) {
+        setCreatedWorkspaceId(wsData.workspaceId)
+      }
+    } finally {
+      setCreating(false)
+    }
   }
 
   const openConfirmModal = async (signal: Signal) => {
     setConfirmingSignal(signal)
+    setCreateMode(false)
+    setNewCustomerName('')
+    setNewOppName('')
+    setCreatedWorkspaceId(null)
     setSelectedOppId(
       (signal.binding?.bindingCandidatesJson as any[])?.[0]?.id ?? ''
     )
@@ -80,16 +224,44 @@ export default function InboxPage() {
       const data = await res.json()
       setAllOpportunities(data.opportunities ?? [])
     }
+    setOppSearchQ('')
   }
 
-  const handleIgnore = async (signalId: string) => {
+  const handleIgnore = async (signalId: string, reason?: string) => {
     await fetch(`/api/signals/${signalId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'ignore' }),
+      body: JSON.stringify({ action: 'ignore', ignoreReason: reason }),
     })
     load()
     setSelectedSignal(null)
+    setIgnoringSignalId(null)
+    setIgnoreReason('')
+  }
+
+  const handleUpload = async () => {
+    if (!uploadFile) return
+    setUploading(true)
+    setUploadError(null)
+    setUploadResult(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', uploadFile)
+      formData.append('sourceType', 'file_upload')
+      formData.append('fileLabel', uploadLabel)
+      const res = await fetch('/api/signals/upload', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (!res.ok) {
+        setUploadError(data.error ?? '上传失败')
+      } else {
+        setUploadResult({ summary: data.normalized?.summary, fileName: data.fileName, extractedLength: data.extractedLength })
+        load()
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : '上传失败')
+    } finally {
+      setUploading(false)
+    }
   }
 
   const handleIngest = async () => {
@@ -111,6 +283,38 @@ export default function InboxPage() {
     }
   }
 
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return
+    setBulkDeleting(true)
+    // [P0-5/P0-6] Use PATCH ignore instead of DELETE to preserve training signals
+    await fetch('/api/signals', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'ignore', ids: Array.from(selectedIds), ignoreReason: 'bulk_ignored' }),
+    })
+    setBulkDeleting(false)
+    setSelectedIds(new Set())
+    setSelectedSignal(null)
+    load()
+  }
+
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === signals.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(signals.map((s) => s.id)))
+    }
+  }
+
   const counts = {
     all: signals.length,
     unbound: signals.filter((s) => s.status === 'unbound').length,
@@ -125,8 +329,8 @@ export default function InboxPage() {
         {/* Header */}
         <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Inbox className="w-5 h-5 text-blue-600" />
-            <h1 className="text-lg font-semibold">AI 收件箱</h1>
+            <Radio className="w-5 h-5 text-blue-600" />
+            <h1 className="text-lg font-semibold">信号台</h1>
             <span className="text-sm text-gray-500">
               {counts.pending_confirm > 0 && (
                 <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full text-xs font-medium">
@@ -135,21 +339,146 @@ export default function InboxPage() {
               )}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 relative">
             <button
-              onClick={load}
-              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-              title="刷新"
+              onClick={() => router.push('/settings')}
+              className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition-colors"
             >
-              <RefreshCw className="w-4 h-4 text-gray-500" />
+              <Plug className="w-3.5 h-3.5" />
+              连接器
             </button>
-            <button
-              onClick={() => setShowIngest(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              手动录入信号
-            </button>
+            {lastSyncAt && (
+              <span className="text-xs text-gray-400">
+                同步于 {formatRelativeTime(lastSyncAt)}
+              </span>
+            )}
+            <div className="relative">
+              <button
+                onClick={() => { setShowIngestDropdown(v => !v); setShowSyncPanel(false) }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                接入信号
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+              {showIngestDropdown && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowIngestDropdown(false)} />
+                  <div className="absolute right-0 top-10 z-20 bg-white border rounded-xl shadow-lg w-44 overflow-hidden">
+                    <button
+                      onClick={() => { setShowIngestDropdown(false); setSyncResult(null); setShowSyncPanel(true) }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 text-gray-400 ${syncing ? 'animate-spin' : ''}`} />
+                      {syncing ? '同步中...' : '同步笔记'}
+                    </button>
+                    <button
+                      onClick={() => { setShowIngestDropdown(false); setShowUpload(true); setUploadFile(null); setUploadResult(null); setUploadError(null) }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-gray-400" />
+                      上传文件
+                    </button>
+                    <button
+                      onClick={() => { setShowIngestDropdown(false); setShowIngest(true) }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-gray-400" />
+                      手动录入
+                    </button>
+                    <div className="border-t my-1" />
+                    {/* [P1-11] Expose DingTalk / WeCom webhook entry points */}
+                    <a
+                      href="/settings"
+                      onClick={() => setShowIngestDropdown(false)}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-blue-600 hover:bg-blue-50"
+                    >
+                      <Radio className="w-3.5 h-3.5" />
+                      接入钉钉 / 企微
+                    </a>
+                  </div>
+                </>
+              )}
+            </div>
+            {showSyncPanel && !syncing && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowSyncPanel(false)} />
+                <div className="absolute right-4 top-16 z-20 bg-white border rounded-xl shadow-lg w-72 p-4">
+                  <p className="text-xs font-medium text-gray-700 mb-1">同步数据来源</p>
+                  <p className="text-[11px] text-gray-400 mb-3">当前已接入：<span className="text-blue-600 font-medium">Get 笔记</span>（微信/钉钉/录音将在接入后自动同步）</p>
+
+                  <div className="space-y-2 mb-3">
+                    <p className="text-[11px] text-gray-500 font-medium">Get 笔记</p>
+                    <button
+                      onClick={() => { setShowSyncPanel(false); handleSyncGetNote() }}
+                      className="w-full text-left px-3 py-2 rounded-lg border hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                    >
+                      <p className="text-xs font-medium text-gray-800">增量同步（默认）</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">只拉取上次同步后的新笔记</p>
+                    </button>
+                    <div className="border rounded-lg p-3 space-y-2">
+                      <p className="text-xs font-medium text-gray-800">按关键词搜索</p>
+                      <p className="text-[11px] text-gray-400">扫描全部历史笔记，找出匹配的</p>
+                      <input
+                        type="text"
+                        value={syncKeyword}
+                        onChange={(e) => setSyncKeyword(e.target.value)}
+                        placeholder="如：阳光电源、中石化..."
+                        className="w-full border rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        onKeyDown={(e) => { if (e.key === 'Enter' && syncKeyword.trim()) { setShowSyncPanel(false); handleSyncGetNote(syncKeyword) } }}
+                      />
+                      <button
+                        onClick={() => { if (syncKeyword.trim()) { setShowSyncPanel(false); handleSyncGetNote(syncKeyword) } }}
+                        disabled={!syncKeyword.trim()}
+                        className="w-full py-1.5 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-40"
+                      >
+                        搜索并导入
+                      </button>
+                    </div>
+                  </div>
+
+                  {syncResult && (
+                    <div className="text-xs bg-green-50 border border-green-200 rounded px-2.5 py-2 text-green-700">
+                      新增 <strong>{syncResult.synced}</strong> 条，跳过 {syncResult.skipped} 条
+                    </div>
+                  )}
+
+                  {lastSyncAt && (
+                    <p className="text-[11px] text-gray-400 mt-2">上次同步：{formatRelativeTime(lastSyncAt)}</p>
+                  )}
+
+                  <div className="mt-3 pt-3 border-t">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className="text-xs font-medium text-gray-700">后台自动同步</p>
+                        <p className="text-[11px] text-gray-400">定时拉取，无需手动操作</p>
+                      </div>
+                      <button
+                        onClick={() => setAutoSync(v => !v)}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${autoSync ? 'bg-blue-600' : 'bg-gray-300'}`}
+                      >
+                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${autoSync ? 'translate-x-4' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                    {autoSync && (
+                      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                        <span className="text-[11px] text-gray-500">每</span>
+                        {[15, 30, 60].map((m) => (
+                          <button key={m} onClick={() => setAutoSyncInterval(m)}
+                            className={`px-2 py-0.5 rounded text-[11px] border transition-all ${autoSyncInterval === m ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500'}`}>
+                            {m >= 60 ? '1小时' : `${m}分钟`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button onClick={handleSaveAutoSync} disabled={autoSyncSaving}
+                      className="w-full py-1.5 border rounded text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                      {autoSyncSaving ? '保存中...' : autoSyncSaved ? '✓ 已保存' : '保存设置'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -201,11 +530,30 @@ export default function InboxPage() {
         {/* Signal list */}
         <div className="flex-1 overflow-auto">
           <div className="px-6 pt-4">
+            <Breadcrumb items={[{ label: '商机推进' }, { label: '信号台' }]} />
             <PageGuide
-              role="销售"
-              what="销售与客户/渠道的沟通内容经 AI 处理后在此汇聚，每条信号需确认归属到具体商机"
-              firstStep="点击「待确认」筛选器，找到新信号，查看 AI 建议的商机归属，确认或修改后点击「确认归属」"
               storageKey="inbox"
+              contents={{
+                sales: {
+                  roleLabel: '销售',
+                  purpose: '待裁决的 AI 感知信号队列',
+                  whenToUse: '每次客户有动态、有会议记录或收到文件后来这里',
+                  aiAlreadyDid: '已将原始内容标准化为结构化信号，并给出推荐归属商机和置信度',
+                  youDecide: '确认 AI 归属是否准确，或指定正确商机；必要时忽略并说明原因',
+                  dontDo: '不需要手动录入所有信息，AI 已结构化；不需要去战场页主动找信号',
+                  nextStepLabel: '进入战场总览',
+                  nextStepHref: '/workspace',
+                },
+                solution: {
+                  roleLabel: '方案经理',
+                  purpose: '待裁决的 AI 感知信号队列',
+                  whenToUse: '客户发来技术需求或竞品资料后来这里确认',
+                  aiAlreadyDid: '已解析信号类型、提取关键实体、生成归属候选',
+                  youDecide: '确认是否归属到当前方案商机，有无竞品威胁信号需要跟进',
+                  nextStepLabel: '查看待审批动作',
+                  nextStepHref: '/intervention',
+                },
+              }}
             />
           </div>
           {loading ? (
@@ -216,16 +564,52 @@ export default function InboxPage() {
               <p className="text-sm">暂无信号</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-100">
+            <>
+              {/* 批量操作栏 */}
+              <div className="px-6 py-2 flex items-center gap-3 border-b bg-gray-50">
+                <button
+                  onClick={toggleSelectAll}
+                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  {selectedIds.size === signals.length && signals.length > 0
+                    ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                    : <Square className="w-4 h-4" />
+                  }
+                  {selectedIds.size === signals.length && signals.length > 0 ? '取消全选' : '全选'}
+                </button>
+                {selectedIds.size > 0 && (
+                  <>
+                    <span className="text-xs text-gray-400">已选 {selectedIds.size} 条</span>
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={bulkDeleting}
+                      className="flex items-center gap-1 px-3 py-1 bg-gray-500 text-white rounded-lg text-xs hover:bg-gray-600 disabled:opacity-50"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      {bulkDeleting ? '忽略中...' : '批量忽略'}
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="divide-y divide-gray-100">
               {signals.map((signal) => (
                 <div
                   key={signal.id}
                   onClick={() => setSelectedSignal(signal)}
                   className={`px-6 py-4 cursor-pointer hover:bg-blue-50 transition-colors ${
                     selectedSignal?.id === signal.id ? 'bg-blue-50 border-l-2 border-blue-500' : ''
-                  }`}
+                  } ${selectedIds.has(signal.id) ? 'bg-blue-50' : ''}`}
                 >
                   <div className="flex items-start gap-3">
+                    <button
+                      onClick={(e) => toggleSelect(signal.id, e)}
+                      className="mt-0.5 flex-shrink-0 text-gray-400 hover:text-blue-600"
+                    >
+                      {selectedIds.has(signal.id)
+                        ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                        : <Square className="w-4 h-4" />
+                      }
+                    </button>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                         {signal.signalType && (
@@ -244,6 +628,22 @@ export default function InboxPage() {
                       <p className="text-sm text-gray-800 line-clamp-2">
                         {signal.contentSummary ?? '（无摘要）'}
                       </p>
+                      {/* AI 判断包 */}
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {(signal.parsedEntitiesJson?.riskFlags?.length ?? 0) > 0 && (
+                          <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
+                            风险: {signal.parsedEntitiesJson!.riskFlags![0]}
+                          </span>
+                        )}
+                        {signal.binding?.bindingCandidatesJson && (signal.binding.bindingCandidatesJson as any[]).length > 0 && (
+                          <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                            AI推荐: {(signal.binding.bindingCandidatesJson as any[])[0]?.name}（{Math.round(((signal.binding.bindingCandidatesJson as any[])[0]?.confidence ?? 0) * 100)}%）
+                          </span>
+                        )}
+                        {!signal.binding && signal.status === 'unbound' && (
+                          <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">待归属</span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-3 mt-1.5">
                         <span className="text-xs text-gray-400">{formatRelativeTime(signal.createdAt)}</span>
                         {signal.confidenceScore && (
@@ -253,17 +653,19 @@ export default function InboxPage() {
                         )}
                       </div>
                     </div>
-                    {signal.status === 'pending_confirm' && (
+                    {(signal.status === 'pending_confirm' || signal.status === 'unbound') && (
                       <div className="flex gap-1 flex-shrink-0 mt-0.5">
+                        {(signal.status === 'pending_confirm' || signal.status === 'unbound') && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openConfirmModal(signal) }}
+                            className="p-1.5 rounded-lg bg-green-50 hover:bg-green-100 text-green-600 transition-colors"
+                            title="批准 AI 归属"
+                          >
+                            <CheckCircle className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
-                          onClick={(e) => { e.stopPropagation(); openConfirmModal(signal) }}
-                          className="p-1.5 rounded-lg bg-green-50 hover:bg-green-100 text-green-600 transition-colors"
-                          title="确认归属"
-                        >
-                          <CheckCircle className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleIgnore(signal.id) }}
+                          onClick={(e) => { e.stopPropagation(); setIgnoringSignalId(signal.id); setIgnoreReason(''); setSelectedSignal(signal) }}
                           className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-500 transition-colors"
                           title="忽略"
                         >
@@ -275,6 +677,7 @@ export default function InboxPage() {
                 </div>
               ))}
             </div>
+            </>
           )}
         </div>
       </div>
@@ -287,10 +690,69 @@ export default function InboxPage() {
             <button onClick={() => setSelectedSignal(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
           </div>
           <div className="flex-1 overflow-auto px-4 py-4 space-y-4">
+            {selectedSignal.rawContent && (
+              <div>
+                <label className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-1 block">原始内容</label>
+                <p className="text-xs text-gray-600 bg-gray-50 rounded px-3 py-2 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                  {selectedSignal.rawContent}
+                </p>
+              </div>
+            )}
             <div>
               <p className="text-xs text-gray-500 mb-1">摘要</p>
               <p className="text-sm">{selectedSignal.contentSummary ?? '—'}</p>
             </div>
+
+            {/* 关键信息点 */}
+            {selectedSignal.parsedEntitiesJson?.keyPoints && selectedSignal.parsedEntitiesJson.keyPoints.length > 0 && (
+              <div>
+                <p className="text-xs text-gray-500 mb-1.5">关键信息</p>
+                <ul className="space-y-1">
+                  {selectedSignal.parsedEntitiesJson.keyPoints.map((pt, i) => (
+                    <li key={i} className="text-xs text-gray-700 flex gap-1.5">
+                      <span className="text-blue-400 mt-0.5 flex-shrink-0">·</span>{pt}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* 风险标记 */}
+            {selectedSignal.parsedEntitiesJson?.riskFlags && selectedSignal.parsedEntitiesJson.riskFlags.length > 0 && (
+              <div className="bg-red-50 rounded-lg px-3 py-2">
+                <p className="text-xs text-red-600 font-medium mb-1">风险信号</p>
+                {selectedSignal.parsedEntitiesJson.riskFlags.map((r, i) => (
+                  <p key={i} className="text-xs text-red-700">⚠ {r}</p>
+                ))}
+              </div>
+            )}
+
+            {/* 竞品/金额/截止 */}
+            {(selectedSignal.parsedEntitiesJson?.competitorMentions?.length ||
+              selectedSignal.parsedEntitiesJson?.amounts?.length ||
+              selectedSignal.parsedEntitiesJson?.deadlines?.length) && (
+              <div className="grid grid-cols-1 gap-2">
+                {selectedSignal.parsedEntitiesJson.competitorMentions?.length ? (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-0.5">竞品</p>
+                    <p className="text-xs text-orange-600">{selectedSignal.parsedEntitiesJson.competitorMentions.join('、')}</p>
+                  </div>
+                ) : null}
+                {selectedSignal.parsedEntitiesJson.amounts?.length ? (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-0.5">金额/预算</p>
+                    <p className="text-xs text-gray-700">{selectedSignal.parsedEntitiesJson.amounts.join('、')}</p>
+                  </div>
+                ) : null}
+                {selectedSignal.parsedEntitiesJson.deadlines?.length ? (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-0.5">时间节点</p>
+                    <p className="text-xs text-gray-700">{selectedSignal.parsedEntitiesJson.deadlines.join('、')}</p>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="text-xs text-gray-500 mb-1">类型</p>
@@ -315,6 +777,7 @@ export default function InboxPage() {
                 <p className="text-xs text-gray-700">P{selectedSignal.priority ?? '—'}</p>
               </div>
             </div>
+
             {selectedSignal.binding?.bindingCandidatesJson && (
               <div>
                 <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
@@ -335,74 +798,351 @@ export default function InboxPage() {
               </div>
             )}
           </div>
-          {selectedSignal.status === 'pending_confirm' && (
-            <div className="px-4 py-3 border-t flex gap-2">
-              <button
-                onClick={() => openConfirmModal(selectedSignal)}
-                className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
-              >
-                确认归属
-              </button>
-              <button
-                onClick={() => handleIgnore(selectedSignal.id)}
-                className="flex-1 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-              >
-                忽略
-              </button>
+
+          {/* Action buttons — all statuses except already closed */}
+          {selectedSignal.status !== 'closed' && (
+            <div className="px-4 py-3 border-t space-y-2">
+              <div className="flex gap-2">
+                {(selectedSignal.status === 'pending_confirm' || selectedSignal.status === 'unbound') && (
+                  <button
+                    onClick={() => openConfirmModal(selectedSignal)}
+                    className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
+                  >
+                    批准 AI 归属
+                  </button>
+                )}
+                {selectedSignal.status === 'bound' && (
+                  <button
+                    onClick={() => openConfirmModal(selectedSignal)}
+                    className="flex-1 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+                  >
+                    修改归属
+                  </button>
+                )}
+                <button
+                  onClick={() => setIgnoringSignalId(ignoringSignalId === selectedSignal.id ? null : selectedSignal.id)}
+                  className="px-3 py-2 border border-red-200 text-red-500 rounded-lg text-sm hover:bg-red-50 transition-colors"
+                >
+                  忽略
+                </button>
+              </div>
+              {ignoringSignalId === selectedSignal.id && (
+                <div className="bg-red-50 rounded-lg p-3 space-y-2">
+                  <p className="text-xs font-medium text-red-700">忽略原因（必填）</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      { value: 'misjudge', label: '误判' },
+                      { value: 'duplicate', label: '重复信号' },
+                      { value: 'invalid', label: '无效信号' },
+                      { value: 'no_followup', label: '无需跟进' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setIgnoreReason(opt.value)}
+                        className={`py-1.5 rounded text-xs border transition-colors ${
+                          ignoreReason === opt.value
+                            ? 'border-red-500 bg-red-100 text-red-700 font-medium'
+                            : 'border-red-200 text-red-500 hover:bg-red-100'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => handleIgnore(selectedSignal.id, ignoreReason)}
+                    disabled={!ignoreReason}
+                    className="w-full py-1.5 bg-red-600 text-white rounded text-xs hover:bg-red-700 disabled:opacity-40"
+                  >
+                    确认忽略
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
       )}
 
       {/* Confirm binding modal */}
-      {confirmingSignal && (
+      {confirmingSignal && !createdWorkspaceId && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-[480px] p-6">
+          <div className="bg-white rounded-xl shadow-xl w-[500px] p-6">
             <h2 className="text-base font-semibold mb-1">确认信号归属</h2>
             <p className="text-xs text-gray-500 mb-4 line-clamp-2">{confirmingSignal.contentSummary}</p>
-            <div className="mb-4">
-              <label className="text-xs text-gray-500 block mb-1">归属到哪个商机？</label>
-              <select
-                value={selectedOppId}
-                onChange={(e) => setSelectedOppId(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
+
+            {/* Mode toggle */}
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => setCreateMode(false)}
+                className={`flex-1 py-1.5 rounded-lg text-xs border transition-all ${!createMode ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
               >
-                <option value="">— 不绑定商机 —</option>
-                {allOpportunities.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
+                绑定已有商机
+              </button>
+              <button
+                onClick={() => setCreateMode(true)}
+                className={`flex-1 py-1.5 rounded-lg text-xs border transition-all ${createMode ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+              >
+                + 新建商机 & 战场
+              </button>
             </div>
-            {confirmingSignal.binding?.bindingCandidatesJson && (confirmingSignal.binding.bindingCandidatesJson as any[]).length > 0 && (
-              <div className="mb-4 bg-blue-50 rounded-lg p-3">
-                <p className="text-xs text-blue-600 font-medium mb-2">AI 推荐候选</p>
-                <div className="space-y-1">
-                  {(confirmingSignal.binding.bindingCandidatesJson as any[]).slice(0, 3).map((c: any, i: number) => (
-                    <button
-                      key={i}
-                      onClick={() => setSelectedOppId(c.type === 'opportunity' ? c.id : selectedOppId)}
-                      className="w-full flex items-center justify-between bg-white rounded px-2.5 py-1.5 hover:bg-blue-100 transition-colors text-left"
-                    >
-                      <span className="text-xs font-medium text-gray-700">{c.name}</span>
-                      <span className="text-xs text-blue-500">{Math.round(c.confidence * 100)}% 匹配</span>
-                    </button>
-                  ))}
+
+            {!createMode ? (
+              <>
+                <div className="mb-4">
+                  <label className="text-xs text-gray-500 block mb-1">归属到哪个商机？</label>
+                  {/* [P1-7] Search box for opportunity modal */}
+                  <input
+                    type="text"
+                    value={oppSearchQ}
+                    onChange={(e) => setOppSearchQ(e.target.value)}
+                    placeholder="搜索商机名称..."
+                    className="w-full border rounded-lg px-3 py-1.5 text-sm mb-1.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  />
+                  <select
+                    value={selectedOppId}
+                    onChange={(e) => setSelectedOppId(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    size={Math.min(6, (oppSearchQ ? allOpportunities.filter(o => o.name.includes(oppSearchQ)) : allOpportunities).length + 1)}
+                  >
+                    <option value="">— 不绑定商机 —</option>
+                    {(oppSearchQ
+                      ? allOpportunities.filter(o => o.name.toLowerCase().includes(oppSearchQ.toLowerCase()))
+                      : allOpportunities
+                    ).map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
                 </div>
+                {confirmingSignal.binding?.bindingCandidatesJson && (confirmingSignal.binding.bindingCandidatesJson as any[]).length > 0 && (
+                  <div className="mb-4 bg-blue-50 rounded-lg p-3">
+                    <p className="text-xs text-blue-600 font-medium mb-2">AI 推荐候选</p>
+                    <div className="space-y-1">
+                      {(confirmingSignal.binding.bindingCandidatesJson as any[]).slice(0, 3).map((c: any, i: number) => (
+                        <button
+                          key={i}
+                          onClick={() => setSelectedOppId(c.type === 'opportunity' ? c.id : selectedOppId)}
+                          className="w-full flex items-center justify-between bg-white rounded px-2.5 py-1.5 hover:bg-blue-100 transition-colors text-left"
+                        >
+                          <span className="text-xs font-medium text-gray-700">{c.name}</span>
+                          <span className="text-xs text-blue-500">{Math.round(c.confidence * 100)}% 匹配</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => { setConfirmingSignal(null); setSelectedOppId('') }}
+                    className="px-4 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => handleConfirm(confirmingSignal.id, selectedOppId || undefined)}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
+                  >
+                    确认归属
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-3 mb-4">
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">客户名称</label>
+                    <input
+                      type="text"
+                      value={newCustomerName}
+                      onChange={(e) => setNewCustomerName(e.target.value)}
+                      placeholder="例：阳光电源"
+                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">商机名称</label>
+                    <input
+                      type="text"
+                      value={newOppName}
+                      onChange={(e) => setNewOppName(e.target.value)}
+                      placeholder="例：阳光电源储能安全培训项目"
+                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setCreateMode(false)}
+                    className="px-4 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    返回
+                  </button>
+                  <button
+                    onClick={handleConfirmAndCreateWorkspace}
+                    disabled={creating || !newCustomerName.trim() || !newOppName.trim()}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {creating ? '创建中...' : '创建商机 & 战场'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Workspace created success banner */}
+      {createdWorkspaceId && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-[400px] p-6 text-center">
+            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <CheckCircle className="w-6 h-6 text-green-600" />
+            </div>
+            <h2 className="text-base font-semibold mb-1">战场已创建</h2>
+            <p className="text-sm text-gray-500 mb-5">信号已归属，商机战场已就绪，AI 数字员工将自动启动分析</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCreatedWorkspaceId(null)}
+                className="flex-1 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                留在信号台
+              </button>
+              <button
+                onClick={() => router.push(`/workspace/${createdWorkspaceId}`)}
+                className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+              >
+                进入战场 →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmed binding toast */}
+      {confirmedWorkspaceId && (
+        <div className="fixed bottom-6 right-6 z-50 bg-white border border-green-200 rounded-xl shadow-lg px-4 py-3 flex items-center gap-3">
+          <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+          <span className="text-sm text-gray-700">归属已确认</span>
+          <button
+            onClick={() => router.push(`/workspace/${confirmedWorkspaceId}`)}
+            className="text-sm text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap"
+          >
+            进入战场 →
+          </button>
+          <button onClick={() => setConfirmedWorkspaceId(null)} className="text-gray-400 hover:text-gray-600 ml-1">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* File upload modal */}
+      {showUpload && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-[480px] p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold">上传文件信号</h2>
+              <button onClick={() => setShowUpload(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* File label */}
+            <div className="mb-4">
+              <label className="text-xs text-gray-500 block mb-1.5">文件用途</label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'competitor', label: '竞品资料', color: 'orange' },
+                  { value: 'quotation', label: '报价单', color: 'blue' },
+                  { value: 'proposal', label: '方案文档', color: 'purple' },
+                  { value: 'contract', label: '合同/协议', color: 'green' },
+                  { value: 'other', label: '其他文件', color: 'gray' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setUploadLabel(opt.value)}
+                    className={`py-2 rounded-lg text-xs border transition-all ${
+                      uploadLabel === opt.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                const f = e.dataTransfer.files?.[0]
+                if (f) { setUploadFile(f); setUploadResult(null); setUploadError(null) }
+              }}
+              className="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors mb-4"
+            >
+              {uploadFile ? (
+                <div className="flex items-center justify-center gap-2">
+                  {uploadFile.type.startsWith('image/') ? (
+                    <Image className="w-5 h-5 text-blue-500" />
+                  ) : (
+                    <FileText className="w-5 h-5 text-blue-500" />
+                  )}
+                  <span className="text-sm text-gray-800 font-medium">{uploadFile.name}</span>
+                  <span className="text-xs text-gray-400">({(uploadFile.size / 1024).toFixed(0)} KB)</span>
+                </div>
+              ) : (
+                <>
+                  <Upload className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm text-gray-500">点击选择或拖拽文件</p>
+                  <p className="text-xs text-gray-400 mt-1">支持图片、文本、CSV、JSON（最大 10MB）</p>
+                </>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.txt,.md,.csv,.json,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) { setUploadFile(f); setUploadResult(null); setUploadError(null) }
+              }}
+            />
+
+            {/* Result / error */}
+            {uploadResult && (
+              <div className="mb-4 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
+                <p className="text-xs font-medium text-green-700 mb-1">✓ 信号已创建</p>
+                {uploadResult.summary && (
+                  <p className="text-xs text-green-800">{uploadResult.summary}</p>
+                )}
+                <p className="text-[11px] text-green-600 mt-1">提取 {uploadResult.extractedLength} 字符</p>
               </div>
             )}
+            {uploadError && (
+              <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                <p className="text-xs text-red-700">{uploadError}</p>
+              </div>
+            )}
+
             <div className="flex gap-2 justify-end">
               <button
-                onClick={() => { setConfirmingSignal(null); setSelectedOppId('') }}
+                onClick={() => setShowUpload(false)}
                 className="px-4 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
               >
-                取消
+                {uploadResult ? '关闭' : '取消'}
               </button>
-              <button
-                onClick={() => handleConfirm(confirmingSignal.id, selectedOppId || undefined)}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
-              >
-                确认归属
-              </button>
+              {!uploadResult && (
+                <button
+                  onClick={handleUpload}
+                  disabled={!uploadFile || uploading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {uploading ? 'AI 解析中...' : '上传并分析'}
+                </button>
+              )}
             </div>
           </div>
         </div>

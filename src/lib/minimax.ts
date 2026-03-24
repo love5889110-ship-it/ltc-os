@@ -61,3 +61,44 @@ export async function minimaxChat(params: {
   if (!content) throw new Error(`LLM 返回格式异常: ${JSON.stringify(data)}`)
   return content
 }
+
+/**
+ * 多轮对话版本，用于需要保持上下文的场景（如技能沙盘训练）
+ */
+export async function minimaxChatMultiTurn(params: {
+  system: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  maxTokens?: number
+  temperature?: number
+}): Promise<string> {
+  const { apiKey, baseUrl, model } = await getLLMConfig()
+
+  const messages: Message[] = [
+    { role: 'system', content: params.system },
+    ...params.messages,
+  ]
+
+  const res = await fetch(baseUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      max_tokens: params.maxTokens ?? 2048,
+      temperature: params.temperature ?? 0.5,
+    }),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`LLM API error ${res.status}: ${err}`)
+  }
+
+  const data = await res.json()
+  const content = data?.choices?.[0]?.message?.content
+  if (!content) throw new Error(`LLM 返回格式异常: ${JSON.stringify(data)}`)
+  return content
+}

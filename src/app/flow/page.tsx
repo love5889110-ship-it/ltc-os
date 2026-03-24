@@ -9,6 +9,7 @@ import {
   FlaskConical, BarChart2, FileEdit, Inbox, Swords, ClipboardList
 } from 'lucide-react'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 import Link from 'next/link'
 
 // ─── Tab 1: 系统全貌 ───────────────────────────────────────────────────────
@@ -17,7 +18,7 @@ const SIGNAL_FLOW = [
   { id: 'connectors', label: '连接器', sublabel: '持续输入', icon: Radio, role: 'human', time: '随时', color: 'purple', desc: '6种信号来源：Get笔记录音、钉钉群、文件OCR、录音上传、微信代理、手动输入。连接器持续监听，无需销售重复操作。' },
   { id: 'input', label: '信息录入', sublabel: '信号创建', icon: Mic, role: 'human', time: '30秒~2分钟', color: 'purple', desc: '销售完成沟通后，通过任意连接器录入原始内容。这是人工介入的第一个（也是最主要的）入口。' },
   { id: 'normalize', label: 'AI 标准化', sublabel: '全自动', icon: Cpu, role: 'ai', time: '自动', color: 'blue', desc: 'AI 自动解析原始内容：识别信号类型（需求/风险/机会/阻塞）、优先级（1-5）、关键实体（客户/竞品/金额/时间节点），生成要点和风险标记。' },
-  { id: 'bind', label: '归属确认', sublabel: '3秒操作', icon: GitBranch, role: 'hybrid', time: '~3秒（置信度<85%时）', color: 'indigo', desc: 'AI 自动计算与已有商机的匹配置信度。置信度 ≥85% 时完全自动绑定；低于85%时，销售在收件箱 3秒确认候选——这是最轻量的人工操作。' },
+  { id: 'bind', label: '归属确认', sublabel: '3秒操作', icon: GitBranch, role: 'hybrid', time: '~3秒（置信度<92%时）', color: 'indigo', desc: 'AI 自动计算与已有商机的匹配置信度。置信度 ≥92% 时完全自动绑定；低于92%时，销售在信号台 3秒确认候选——这是最轻量的人工操作。' },
   { id: 'trigger', label: '触发分析', sublabel: '全自动', icon: Zap, role: 'ai', time: '自动', color: 'cyan', desc: '信号绑定后，自动触发对应阶段的 AI 数字员工。另有4种触发方式：阶段变更自动触发、每日定时健康检查、人工手动触发、执行回调触发（执行结果驱动新一轮分析）。' },
 ]
 
@@ -68,7 +69,7 @@ const JOURNEY_STEPS = [
     detail: '李总打开 Get笔记 录音，说："赵总监反馈竞品幻威已演示，报价低18%，需要煤矿行业案例，下周要见安全总监。"',
     dbState: 'signalEvents: rawContent 已录入\nstatus: unbound\nsourceType: get_notes',
     pageHref: '/inbox',
-    pageLabel: 'AI 收件箱',
+    pageLabel: '信号台',
   },
   {
     id: 'ai_parse', label: 'AI 解析', role: 'ai', time: '自动（~2秒）',
@@ -83,10 +84,10 @@ const JOURNEY_STEPS = [
     id: 'bind', label: '归属确认', role: 'hybrid', time: '~3秒',
     icon: GitBranch, color: 'indigo',
     story: 'AI 推荐：此信号 92% 属于"大同煤矿 VR 项目"商机…',
-    detail: 'AI 计算置信度 92% → 推荐绑定到"大同煤矿井下采掘VR安全培训"商机\n因置信度 <95%，送人工确认\n李总在收件箱点击"确认"（3秒），信号绑定完成',
+    detail: 'AI 计算置信度 92% → 推荐绑定到"大同煤矿井下采掘VR安全培训"商机\n因置信度 <92%，送人工确认\n李总在信号台点击"批准 AI 归属"（3秒），信号绑定完成',
     dbState: 'signalBindings: status: confirmed\nopportunityId: opp_001\nbindingConfidence: 0.92\nsignalEvents.status: bound',
     pageHref: '/inbox',
-    pageLabel: 'AI 收件箱',
+    pageLabel: '信号台',
   },
   {
     id: 'agent_run', label: 'AI 数字员工分析', role: 'ai', time: '自动（~5-10秒）',
@@ -100,20 +101,20 @@ const JOURNEY_STEPS = [
   {
     id: 'approve', label: '人工审批', role: 'human', time: '约1分钟',
     icon: Users, color: 'amber',
-    story: '张总监在商机作战台看到 AI 建议，快速审批…',
+    story: '张总监在战场总览看到 AI 建议，快速审批…',
     detail: '张总监看到：\n  ✓ 通过"安排销售总监介入"任务\n  ✏ 修改差异化方案邮件草稿（改写了开场白措辞）\n    → 系统自动记录改写内容为反馈样本\n    → feedbackLabel: modified',
     dbState: 'agentActions: status: approved\napprovalTasks: status: approved\nfeedbackSamples: originalOutputJson vs correctedOutputJson\nhumanInterventions: interventionType: modify_output',
     pageHref: '/workspace',
-    pageLabel: '商机作战台',
+    pageLabel: '战场总览',
   },
   {
     id: 'execute', label: '自动执行', role: 'ai', time: '自动',
     icon: Zap, color: 'green',
     story: '审批通过后，系统自动执行所有动作…',
-    detail: '已执行：\n  ✅ 任务创建：「安排销售总监拜访大同煤矿」，分配给张总监，截止3天内\n  ✅ 草稿生成：差异化方案邮件（已入草稿中心，待李总发送）\n  ✅ 状态快照：当前商机健康度60%，风险分70%，已记录',
+    detail: '已执行：\n  ✅ 任务创建：「安排销售总监拜访大同煤矿」，分配给张总监，截止3天内\n  ✅ 草稿生成：差异化方案邮件（已入对客草稿，待李总发送）\n  ✅ 状态快照：当前商机健康度60%，风险分70%，已记录',
     dbState: 'tasks: title, assignee, dueDate\ndrafts: contentText（修改后版本）\nstateSnapshots: healthScore:60, riskScore:70\nexecutionLogs: status: completed',
     pageHref: '/tasks',
-    pageLabel: '任务中心 / 草稿中心',
+    pageLabel: '任务执行 / 对客草稿',
   },
   {
     id: 'evolve', label: '进化沉淀', role: 'human', time: '每周~30分钟',
@@ -129,20 +130,20 @@ const JOURNEY_STEPS = [
 // ─── Tab 3: 多Agent协作 ───────────────────────────────────────────────────
 
 const AGENTS_DATA = [
-  { type: 'sales_copilot', label: '销售推进员', stage: '全阶段', color: 'bg-blue-500', textColor: 'text-blue-700', lightBg: 'bg-blue-50', border: 'border-blue-200', desc: '监控商机健康度，识别停滞和竞品风险，驱动阶段推进', triggers: ['信号绑定', '阶段变更', '每日定时'] },
-  { type: 'presales_assistant', label: '售前助手', stage: '需求/方案', color: 'bg-indigo-500', textColor: 'text-indigo-700', lightBg: 'bg-indigo-50', border: 'border-indigo-200', desc: '结构化客户需求，推荐行业方案，匹配成功案例', triggers: ['需求信号', '方案评审'] },
-  { type: 'tender_assistant', label: '招投标助手', stage: '招投标', color: 'bg-cyan-500', textColor: 'text-cyan-700', lightBg: 'bg-cyan-50', border: 'border-cyan-200', desc: '解析招标文件，检查投标资质，识别控标风险，管理截止时间', triggers: ['招标文件', '截标预警'] },
-  { type: 'commercial', label: '商务助手', stage: '商务谈判', color: 'bg-teal-500', textColor: 'text-teal-700', lightBg: 'bg-teal-50', border: 'border-teal-200', desc: '报价策略建议，价格谈判辅助，合同条款风险识别', triggers: ['价格信号', '合同阶段'] },
-  { type: 'handover', label: '交接助手', stage: '合同/交付', color: 'bg-green-500', textColor: 'text-green-700', lightBg: 'bg-green-50', border: 'border-green-200', desc: '生成项目交接包，确认交付边界和所有承诺，防止信息断层', triggers: ['合同签订'] },
-  { type: 'service_triage', label: '服务分诊员', stage: '售后服务', color: 'bg-orange-500', textColor: 'text-orange-700', lightBg: 'bg-orange-50', border: 'border-orange-200', desc: '工单分类和优先级，识别续约风险，挖掘增购机会', triggers: ['售后工单', '定时巡检'] },
-  { type: 'asset_governance', label: '资产治理员', stage: '全阶段', color: 'bg-rose-500', textColor: 'text-rose-700', lightBg: 'bg-rose-50', border: 'border-rose-200', desc: '从赢单/输单案例提炼经验，管理话术资产，清理过时资料', triggers: ['商机关闭', '手动触发'] },
+  { type: 'sales_copilot',    label: '销售 Agent',      stage: '全阶段',   color: 'bg-blue-500',   textColor: 'text-blue-700',   lightBg: 'bg-blue-50',   border: 'border-blue-200',   desc: '监控商机健康度，识别停滞和竞品风险，驱动阶段推进',                         triggers: ['信号绑定', '阶段变更', '每日定时'] },
+  { type: 'presales_assistant', label: '解决方案 Agent', stage: '需求/方案', color: 'bg-indigo-500', textColor: 'text-indigo-700', lightBg: 'bg-indigo-50', border: 'border-indigo-200', desc: '结构化客户需求，推荐行业方案，匹配成功案例',                             triggers: ['需求信号', '方案评审'] },
+  { type: 'tender_assistant',  label: '招标 Agent',      stage: '招投标',   color: 'bg-cyan-500',   textColor: 'text-cyan-700',   lightBg: 'bg-cyan-50',   border: 'border-cyan-200',   desc: '解析招标文件，检查投标资质，识别控标风险，管理截止时间',                     triggers: ['招标文件', '截标预警'] },
+  { type: 'commercial',        label: '商务 Agent',      stage: '商务谈判', color: 'bg-teal-500',   textColor: 'text-teal-700',   lightBg: 'bg-teal-50',   border: 'border-teal-200',   desc: '报价策略建议，价格谈判辅助，合同条款风险识别',                             triggers: ['价格信号', '合同阶段'] },
+  { type: 'handover',          label: '交付 Agent',      stage: '合同/交付', color: 'bg-green-500', textColor: 'text-green-700',  lightBg: 'bg-green-50',  border: 'border-green-200',  desc: '生成项目交接包，确认交付边界和所有承诺，防止信息断层',                       triggers: ['合同签订'] },
+  { type: 'service_triage',    label: '服务 Agent',      stage: '售后服务', color: 'bg-orange-500', textColor: 'text-orange-700', lightBg: 'bg-orange-50', border: 'border-orange-200', desc: '工单分类和优先级，识别续约风险，挖掘增购机会',                             triggers: ['售后工单', '定时巡检'] },
+  { type: 'asset_governance',  label: '资产管理 Agent',  stage: '全阶段',   color: 'bg-rose-500',   textColor: 'text-rose-700',   lightBg: 'bg-rose-50',   border: 'border-rose-200',   desc: '从赢单/输单案例提炼经验，管理话术资产，清理过时资料',                       triggers: ['商机关闭', '手动触发'] },
 ]
 
 const CROSS_AGENT_EXAMPLES = [
-  { from: 'sales_copilot', to: 'presales_assistant', desc: '销售推进员识别到"方案竞争力被质疑"→ 售前助手收到预警，主动加强案例背书' },
-  { from: 'tender_assistant', to: 'sales_copilot', desc: '招投标助手发现"技术参数疑似控标"→ 销售推进员收到 severity:5 风险，立即建议销售总监介入' },
-  { from: 'commercial', to: 'sales_copilot', desc: '商务助手识别"价格战风险"→ 销售推进员同步预警，建议从关系层面补救' },
-  { from: 'presales_assistant', to: 'commercial', desc: '售前助手输出"差异化方案要点"→ 商务助手据此构建价值锚定，支撑报价策略' },
+  { from: 'sales_copilot', to: 'presales_assistant', desc: '销售 Agent 识别到"方案竞争力被质疑"→ 解决方案 Agent 收到预警，主动加强案例背书' },
+  { from: 'tender_assistant', to: 'sales_copilot', desc: '招标 Agent 发现"技术参数疑似控标"→ 销售 Agent 收到 severity:5 风险，立即建议销售总监介入' },
+  { from: 'commercial', to: 'sales_copilot', desc: '商务 Agent 识别"价格战风险"→ 销售 Agent 同步预警，建议从关系层面补救' },
+  { from: 'presales_assistant', to: 'commercial', desc: '解决方案 Agent 输出"差异化方案要点"→ 商务 Agent 据此构建价值锚定，支撑报价策略' },
 ]
 
 // ─── Tab 4: 角色导航 ───────────────────────────────────────────────────────
@@ -166,11 +167,10 @@ const ROLE_GUIDES: Record<RoleKey, {
     iconColor: 'text-blue-500', tagColor: 'bg-blue-100 text-blue-700',
     dailyTime: '每天累计约 10 分钟',
     steps: [
-      { step: '录入信号（客户沟通记录）', time: '30秒~2分钟', pageHref: '/inbox', pageLabel: 'AI 收件箱' },
-      { step: '确认信号归属商机', time: '~3秒（低置信度时）', pageHref: '/inbox', pageLabel: 'AI 收件箱' },
-      { step: '审批 AI 建议的行动', time: '~1分钟', pageHref: '/workspace', pageLabel: '商机作战台' },
-      { step: '发送 AI 生成的邮件草稿', time: '随时', pageHref: '/drafts', pageLabel: '草稿中心' },
-      { step: '完成 AI 分配的跟进任务', time: '随时', pageHref: '/tasks', pageLabel: '任务中心' },
+      { step: '在战场总览录入信号（客户沟通记录）', time: '30秒~2分钟', pageHref: '/workspace', pageLabel: '战场总览' },
+      { step: '确认信号归属商机（低置信度时）', time: '~3秒', pageHref: '/workspace', pageLabel: '战场总览' },
+      { step: '进入战场 → 待你决策 Tab 审批 AI 建议', time: '~1分钟', pageHref: '/workspace', pageLabel: '战场总览' },
+      { step: '在战场「草稿与任务」Tab 发送草稿/完成任务', time: '随时', pageHref: '/workspace', pageLabel: '战场总览' },
     ],
     aiDoes: ['分析信号优先级和类型', '识别竞品风险和机会点', '生成邮件/方案初稿', '更新商机健康度评分', '跨阶段协同决策'],
     noDo: ['不需要手动整理商机摘要', '不需要主动想下一步怎么做', '不需要填写 CRM 字段'],
@@ -180,10 +180,9 @@ const ROLE_GUIDES: Record<RoleKey, {
     iconColor: 'text-indigo-500', tagColor: 'bg-indigo-100 text-indigo-700',
     dailyTime: '每天累计约 15 分钟',
     steps: [
-      { step: '审批售前方案建议', time: '~2分钟', pageHref: '/workspace', pageLabel: '商机作战台' },
-      { step: '管理和更新资产库', time: '不定期', pageHref: '/assets', pageLabel: '资产库' },
-      { step: '处理需人工介入的决策', time: '不定期', pageHref: '/intervention', pageLabel: '人工干预台' },
-      { step: '完成交接相关任务', time: '随时', pageHref: '/tasks', pageLabel: '任务中心' },
+      { step: '进入战场 → 审批方案相关 AI 建议', time: '~2分钟', pageHref: '/workspace', pageLabel: '战场总览' },
+      { step: '管理和更新知识资产', time: '不定期', pageHref: '/assets', pageLabel: '知识资产' },
+      { step: '在战场完成交接相关任务', time: '随时', pageHref: '/workspace', pageLabel: '战场总览' },
     ],
     aiDoes: ['自动结构化客户需求', '推荐匹配的行业案例和方案', '识别方案竞争力风险', '生成差异化对比文档', '自动提取成功案例要素'],
     noDo: ['不需要每次手动选案例', '不需要从头写方案框架', '不需要跟踪各商机需求状态'],
@@ -194,11 +193,10 @@ const ROLE_GUIDES: Record<RoleKey, {
     dailyTime: '每天 5 分钟；每周 30 分钟深度复盘',
     steps: [
       { step: '查看全局商机健康度', time: '5分钟/天', pageHref: '/dashboard', pageLabel: '运行驾驶舱' },
-      { step: '关注高风险商机，直接介入', time: '按需', pageHref: '/workspace', pageLabel: '商机作战台' },
+      { step: '关注高风险商机，直接介入', time: '按需', pageHref: '/workspace', pageLabel: '战场总览' },
       { step: '复盘 AI 被纠偏的决策模式', time: '30分钟/周', pageHref: '/evolution', pageLabel: '进化中心' },
       { step: '提炼规则 / 调整 Prompt', time: '5分钟/条', pageHref: '/evolution', pageLabel: '进化中心' },
-      { step: '管理连接器和大模型配置', time: '不定期', pageHref: '/connectors', pageLabel: '连接器中心' },
-      { step: '沙盘测试调优数字员工', time: '不定期', pageHref: '/sandbox', pageLabel: '沙盘测试' },
+      { step: '管理连接器和大模型配置', time: '不定期', pageHref: '/settings', pageLabel: '连接器与模型' },
     ],
     aiDoes: ['7×24小时监控全部商机', '自动计算和更新健康/风险评分', '识别停滞商机并预警', '生成赢单/输单归因分析', '追踪数字员工执行效果'],
     noDo: ['不需要逐一检查每个商机', '不需要手动催销售更新进展', '不需要人工汇总周报数据'],
@@ -206,9 +204,16 @@ const ROLE_GUIDES: Record<RoleKey, {
 }
 
 export default function FlowPage() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'journey' | 'agents' | 'roles'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'journey' | 'agents' | 'roles'>('roles')
   // Overview state
   const [expandedNode, setExpandedNode] = useState<string | null>(null)
+  // [P1-13] Live system status
+  const [liveStatus, setLiveStatus] = useState<{
+    pendingSignals: number
+    runningAgents: number
+    pendingActions: number
+    failedActions: number
+  } | null>(null)
   // Journey state
   const [journeyStep, setJourneyStep] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -241,6 +246,33 @@ export default function FlowPage() {
     return () => clearInterval(interval)
   }, [activeTab])
 
+  // [P1-13] Fetch live system status when on overview tab
+  useEffect(() => {
+    if (activeTab !== 'overview') return
+    const fetchStatus = async () => {
+      try {
+        const [signalsRes, workspacesRes] = await Promise.all([
+          fetch('/api/signals?status=pending_confirm&limit=100'),
+          fetch('/api/workspaces?limit=50'),
+        ])
+        const signalsData = signalsRes.ok ? await signalsRes.json() : {}
+        const wsData = workspacesRes.ok ? await workspacesRes.json() : {}
+        const workspaces = wsData.workspaces ?? []
+        const runningAgents = workspaces.reduce((sum: number, w: any) => sum + (w.runningAgentCount ?? 0), 0)
+        const pendingActions = workspaces.reduce((sum: number, w: any) => sum + (w.pendingActionCount ?? 0), 0)
+        setLiveStatus({
+          pendingSignals: signalsData.total ?? 0,
+          runningAgents,
+          pendingActions,
+          failedActions: 0,
+        })
+      } catch { /* ignore */ }
+    }
+    fetchStatus()
+    const interval = setInterval(fetchStatus, 30000)
+    return () => clearInterval(interval)
+  }, [activeTab])
+
   const goJourneyTo = (i: number) => {
     if (timerRef.current) clearTimeout(timerRef.current)
     setIsPlaying(false)
@@ -252,18 +284,27 @@ export default function FlowPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      <Breadcrumb items={[{ label: '治理配置' }, { label: '系统地图' }]} />
       <PageGuide
-        role="全员（新人必读）"
-        what="完整展示这套 AI 原生系统的运转逻辑：信号如何流动、AI 如何决策、人在哪里介入、系统如何越用越好"
-        firstStep="先看「角色导航」找到你的工作流，再看「信号的旅程」感受全流程"
         storageKey="flow"
+        contents={{
+          all: {
+            roleLabel: '全员（新人必读）',
+            purpose: 'AI 原生系统运作逻辑全景图',
+            whenToUse: '新人入职，或对系统运作有疑问时来这里',
+            aiAlreadyDid: '已生成完整系统运转示意图',
+            youDecide: '了解整体架构，找到你角色的工作流入口',
+            nextStepLabel: '进入我的工作台',
+            nextStepHref: '/',
+          },
+        }}
       />
 
       <div className="flex items-center justify-between mb-5">
         <div>
           <div className="flex items-center gap-3">
             <Layers className="w-5 h-5 text-blue-600" />
-            <h1 className="text-lg font-semibold">系统运转图</h1>
+            <h1 className="text-lg font-semibold">系统地图</h1>
           </div>
           <p className="text-xs text-gray-400 ml-8 mt-0.5">云艺化AI原生LTC人机协作系统</p>
         </div>
@@ -401,6 +442,35 @@ export default function FlowPage() {
       {/* ── Tab 1: 系统全貌 ── */}
       {activeTab === 'overview' && (
         <div className="space-y-4">
+          {/* [P1-13] Live system status bar */}
+          {liveStatus && (
+            <div className="bg-gray-900 rounded-xl px-4 py-3 flex items-center gap-6 text-sm">
+              <span className="text-gray-400 text-xs font-medium">实时运行状态</span>
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${liveStatus.runningAgents > 0 ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
+                <span className="text-white font-medium">{liveStatus.runningAgents}</span>
+                <span className="text-gray-400 text-xs">Agent 运行中</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${liveStatus.pendingSignals > 0 ? 'bg-yellow-400' : 'bg-gray-500'}`} />
+                <span className="text-white font-medium">{liveStatus.pendingSignals}</span>
+                <span className="text-gray-400 text-xs">信号待确认</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${liveStatus.pendingActions > 0 ? 'bg-orange-400' : 'bg-gray-500'}`} />
+                <span className="text-white font-medium">{liveStatus.pendingActions}</span>
+                <span className="text-gray-400 text-xs">动作待审批</span>
+              </div>
+              {liveStatus.failedActions > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-red-400" />
+                  <span className="text-red-300 font-medium">{liveStatus.failedActions}</span>
+                  <span className="text-gray-400 text-xs">执行失败</span>
+                </div>
+              )}
+              <span className="text-gray-600 text-xs ml-auto">每30秒刷新</span>
+            </div>
+          )}
           {/* 角色图例 */}
           <div className="flex items-center gap-5 text-xs text-gray-500 mb-1">
             <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" />人工操作（显示耗时）</div>
@@ -799,6 +869,17 @@ export default function FlowPage() {
           </div>
         </div>
       )}
+
+      {/* 页面底部 CTA */}
+      <div className="mt-8 pt-6 border-t border-gray-200 flex justify-center">
+        <Link
+          href="/"
+          className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
+        >
+          立即进入我的主工作台
+          <ArrowRight className="w-4 h-4" />
+        </Link>
+      </div>
     </div>
   )
 }

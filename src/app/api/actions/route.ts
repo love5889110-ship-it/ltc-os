@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/db'
-import { agentActions, agentRuns, agentThreads, approvalTasks, humanInterventions, feedbackSamples } from '@/db/schema'
-import { eq, desc } from 'drizzle-orm'
+import { agentActions, agentRuns, agentThreads, approvalTasks, humanInterventions, feedbackSamples, executionLogs } from '@/db/schema'
+import { eq, desc, inArray } from 'drizzle-orm'
 import { generateId } from '@/lib/utils'
 import { executeAction } from '@/lib/executor'
 
@@ -22,7 +22,24 @@ export async function GET(req: NextRequest) {
     limit,
   })
 
-  return NextResponse.json({ actions })
+  // Batch load execution_logs to show result summaries
+  const actionIds = actions.map(a => a.id)
+  const logs = actionIds.length > 0
+    ? await db.query.executionLogs.findMany({
+        where: (l, { inArray }) => inArray(l.actionId, actionIds),
+      })
+    : []
+
+  const result = actions.map(a => {
+    const log = logs.find(l => l.actionId === a.id)
+    return {
+      ...a,
+      resultMessage: (log?.responsePayloadJson as { message?: string } | null)?.message ?? null,
+      executionLogStatus: log?.executionStatus ?? null,
+    }
+  })
+
+  return NextResponse.json({ actions: result })
 }
 
 export async function PATCH(req: NextRequest) {

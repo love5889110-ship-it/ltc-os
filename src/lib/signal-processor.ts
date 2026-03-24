@@ -102,8 +102,14 @@ export async function findBindingCandidates(
 ): Promise<BindingCandidate[]> {
   const candidates: BindingCandidate[] = []
 
+  // [P1-4] Load all three tables once upfront; do matching in memory
+  const [allCustomers, allContacts, allOpps] = await Promise.all([
+    entities.customerNames?.length ? db.select().from(customers) : Promise.resolve([]),
+    entities.personNames?.length ? db.select().from(contacts) : Promise.resolve([]),
+    (entities.keywords?.length || entities.projectNames?.length) ? db.select().from(opportunities) : Promise.resolve([]),
+  ])
+
   if (entities.customerNames?.length) {
-    const allCustomers = await db.select().from(customers)
     for (const name of entities.customerNames) {
       for (const c of allCustomers) {
         const similarity = nameSimilarity(name, c.name)
@@ -115,7 +121,6 @@ export async function findBindingCandidates(
   }
 
   if (entities.personNames?.length) {
-    const allContacts = await db.select().from(contacts)
     for (const name of entities.personNames) {
       for (const c of allContacts) {
         const similarity = nameSimilarity(name, c.name)
@@ -128,7 +133,6 @@ export async function findBindingCandidates(
 
   // Match opportunities by keywords
   if (entities.keywords?.length || entities.projectNames?.length) {
-    const allOpps = await db.select().from(opportunities)
     const searchTerms = [...(entities.keywords ?? []), ...(entities.projectNames ?? [])]
     for (const opp of allOpps) {
       const score = searchTerms.reduce((acc, term) => {
@@ -148,10 +152,19 @@ export async function findBindingCandidates(
   return candidates.sort((a, b) => b.confidence - a.confidence).slice(0, 5)
 }
 
+// [P1-9] Strip common Chinese company suffixes before comparing, boost containment score
+function stripCompanySuffix(s: string): string {
+  return s.replace(/[（(].*?[)）]/g, '').replace(/(有限|公司|集团|股份|责任|控股|科技|技术|发展|实业)/g, '').trim()
+}
+
 function nameSimilarity(a: string, b: string): number {
   a = a.toLowerCase()
   b = b.toLowerCase()
   if (a === b) return 1.0
+  // Containment check on stripped names (handles full name vs short name)
+  const sa = stripCompanySuffix(a)
+  const sb = stripCompanySuffix(b)
+  if (sa && sb && (sb.includes(sa) || sa.includes(sb))) return 0.9
   if (b.includes(a) || a.includes(b)) return 0.8
   // Simple character overlap
   const setA = new Set(a.split(''))
@@ -166,8 +179,29 @@ export async function ingestSignal(params: {
   externalEventId?: string
   rawContent: string
   eventTime?: Date
+  dedupKey?: string
+  overrideSignalType?: SignalType
 }): Promise<{ signalId: string; candidates: BindingCandidate[]; normalized: NormalizeResult }> {
+  // Dedup check
+  if (params.dedupKey) {
+    const existing = await db.query.signalEvents.findFirst({
+      where: (s, { eq }) => eq(s.externalEventId, params.dedupKey!),
+    })
+    if (existing) {
+      return { signalId: existing.id, candidates: [], normalized: {
+        signalType: existing.signalType as SignalType ?? 'info',
+        summary: existing.contentSummary ?? '',
+        keyPoints: [], riskFlags: [], priority: existing.priority ?? 3,
+        confidence: existing.confidenceScore ?? 0.5, entities: {},
+      }}
+    }
+  }
+
   const normalized = await normalizeSignal(params.rawContent)
+  // 允许调用方覆盖 AI 判断的信号类型（如文件上传时已知文件用途）
+  if (params.overrideSignalType) {
+    normalized.signalType = params.overrideSignalType
+  }
   const signalId = generateId()
 
   await db.insert(signalEvents).values({
@@ -192,9 +226,9 @@ export async function ingestSignal(params: {
 
   const candidates = await findBindingCandidates(signalId, normalized.entities)
 
-  // Auto-bind if high confidence single candidate
+  // Auto-bind only when very high confidence — reduces mis-binding
   const topCandidate = candidates[0]
-  if (topCandidate && topCandidate.confidence >= 0.85) {
+  if (topCandidate && topCandidate.confidence >= 0.92) {
     await db.insert(signalBindings).values({
       id: generateId(),
       signalEventId: signalId,

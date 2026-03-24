@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { TrendingUp, ThumbsUp, ThumbsDown, Edit3, Bot, Plus, Shield, ToggleLeft, ToggleRight, Trash2, Settings, Save, Lightbulb, RotateCcw, ChevronRight, Bell, CheckCircle } from 'lucide-react'
 import { AGENT_LABELS, formatRelativeTime } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 interface AISettings {
   signalSummaryStyle: 'brief' | 'detailed' | 'structured'
@@ -112,6 +113,16 @@ export default function EvolutionPage() {
   const [promptSource, setPromptSource] = useState<Record<string, 'db' | 'default'>>({})
   const [promptDescription, setPromptDescription] = useState('')
 
+  // 提炼为规则
+  const [distillPanel, setDistillPanel] = useState<{
+    sampleId: string
+    agentType: string
+    condition: string
+    instruction: string
+    ruleType: 'forbid' | 'require' | 'prefer'
+  } | null>(null)
+  const [distilling, setDistilling] = useState(false)
+
   // Stats tab state
   interface AgentStat {
     agentType: string
@@ -187,6 +198,26 @@ export default function EvolutionPage() {
   const handleDeleteRule = async (id: string) => {
     await fetch(`/api/rules?id=${id}`, { method: 'DELETE' })
     setRules((prev) => prev.filter((r) => r.id !== id))
+  }
+
+  const handleDistillToRule = async () => {
+    if (!distillPanel || !distillPanel.condition.trim() || !distillPanel.instruction.trim()) return
+    setDistilling(true)
+    await fetch('/api/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentType: distillPanel.agentType,
+        ruleType: distillPanel.ruleType,
+        condition: distillPanel.condition.trim(),
+        instruction: distillPanel.instruction.trim(),
+        createdFrom: distillPanel.sampleId,
+      }),
+    })
+    const rd = await fetch('/api/rules').then(r => r.json())
+    setRules(rd.rules ?? [])
+    setDistilling(false)
+    setDistillPanel(null)
   }
 
   const handleSaveRule = async () => {
@@ -329,11 +360,30 @@ export default function EvolutionPage() {
 
   return (
     <div className="p-6">
+      <Breadcrumb items={[{ label: '知识进化' }, { label: '进化中心' }]} />
       <PageGuide
-        role="管理层 / 运营"
-        what="AI 被人工修改的记录汇聚于此，是提炼新规则、让系统越来越懂这家公司的核心页面"
-        firstStep="切到「规则」标签，点击「新建规则」，把近期反复出现的 AI 偏差提炼成约束条件"
         storageKey="evolution"
+        contents={{
+          manager: {
+            roleLabel: '管理层',
+            purpose: '让 AI 越来越懂你公司的周度治理中心',
+            whenToUse: '每周例会后，或发现 AI 反复判断偏差时来这里',
+            aiAlreadyDid: '已收集所有人工修改记录，统计反馈采纳率，识别高频偏差模式',
+            youDecide: '把反复出现的偏差提炼为规则，注入 AI 系统约束未来判断',
+            dontDo: '不是一线日常操作页，不需要每天来',
+            nextStepLabel: '查看运行驾驶舱',
+            nextStepHref: '/dashboard',
+          },
+          sales: {
+            roleLabel: '销售',
+            purpose: '你的纠偏反馈都沉淀在这里',
+            whenToUse: '好奇 AI 学没学会你之前的纠偏时来看看',
+            aiAlreadyDid: '已记录你每次驳回和修改的原因，作为训练样本',
+            youDecide: '查看规则库，确认 AI 规则方向是否符合实际',
+            nextStepLabel: '返回信号台',
+            nextStepHref: '/inbox',
+          },
+        }}
       />
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
@@ -540,6 +590,63 @@ export default function EvolutionPage() {
                             <p className="text-xs text-green-600 font-medium mb-1">修改后</p>
                             <p className="text-xs text-gray-600 truncate">{JSON.stringify(sample.correctedOutputJson).slice(0, 120)}</p>
                           </div>
+                        </div>
+                      )}
+                      {/* 提炼为规则按钮（仅 modified/rejected 样本显示） */}
+                      {(sample.feedbackLabel === 'modified' || sample.feedbackLabel === 'rejected') && sample.agentType && (
+                        <div className="mt-2">
+                          {distillPanel?.sampleId === sample.id ? (
+                            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 space-y-2">
+                              <p className="text-xs font-medium text-blue-700 flex items-center gap-1">
+                                <Lightbulb className="w-3.5 h-3.5" />提炼为规则 — 下次运行将自动遵守
+                              </p>
+                              <div className="flex gap-1">
+                                {(['require', 'forbid', 'prefer'] as const).map(rt => (
+                                  <button key={rt} onClick={() => setDistillPanel(p => p ? { ...p, ruleType: rt } : null)}
+                                    className={`text-xs px-2 py-0.5 rounded border transition-all ${distillPanel.ruleType === rt ? ruleTypeColor[rt] + ' border-transparent' : 'border-gray-200 text-gray-500'}`}>
+                                    {ruleTypeLabel[rt]}
+                                  </button>
+                                ))}
+                              </div>
+                              <input
+                                value={distillPanel.condition}
+                                onChange={e => setDistillPanel(p => p ? { ...p, condition: e.target.value } : null)}
+                                placeholder="触发条件（如：商务谈判阶段且客户提出降价）"
+                                className="w-full border rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+                              />
+                              <input
+                                value={distillPanel.instruction}
+                                onChange={e => setDistillPanel(p => p ? { ...p, instruction: e.target.value } : null)}
+                                placeholder="规则内容（如：必须先用价值置换策略，不直接降价）"
+                                className="w-full border rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+                              />
+                              <div className="flex gap-2 justify-end">
+                                <button onClick={() => setDistillPanel(null)} className="text-xs px-2.5 py-1 border rounded text-gray-500 hover:bg-gray-50">取消</button>
+                                <button
+                                  onClick={handleDistillToRule}
+                                  disabled={distilling || !distillPanel.condition.trim() || !distillPanel.instruction.trim()}
+                                  className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  {distilling ? '保存中...' : '保存为规则'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setDistillPanel({
+                                sampleId: sample.id,
+                                agentType: sample.agentType!,
+                                condition: '',
+                                instruction: typeof sample.correctedOutputJson?.suggestion === 'string'
+                                  ? sample.correctedOutputJson.suggestion
+                                  : '',
+                                ruleType: 'require',
+                              })}
+                              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded transition-colors"
+                            >
+                              <Lightbulb className="w-3 h-3" />提炼为规则
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

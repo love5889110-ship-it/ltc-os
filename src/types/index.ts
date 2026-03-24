@@ -2,10 +2,10 @@ export type SignalType = 'demand' | 'risk' | 'opportunity' | 'blocker' | 'escala
 export type SignalStatus = 'unbound' | 'pending_confirm' | 'bound' | 'triggered' | 'closed'
 export type BindingStatus = 'candidate' | 'confirmed' | 'rejected' | 'auto_bound'
 export type AgentType =
-  | 'sales_copilot'
+  | 'coordinator'
+  | 'sales'
   | 'presales_assistant'
   | 'tender_assistant'
-  | 'commercial'
   | 'handover'
   | 'service_triage'
   | 'asset_governance'

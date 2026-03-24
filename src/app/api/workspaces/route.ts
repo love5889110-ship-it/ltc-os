@@ -1,27 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/db'
 import { opportunityWorkspaces, opportunities, customers, agentThreads } from '@/db/schema'
-import { eq, desc } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { generateId } from '@/lib/utils'
 
 export async function GET(req: NextRequest) {
+  try {
   const { searchParams } = new URL(req.url)
   const limit = parseInt(searchParams.get('limit') ?? '20')
 
-  const workspaces = await db
-    .select({
-      workspace: opportunityWorkspaces,
-      opportunity: opportunities,
-      customer: customers,
-    })
-    .from(opportunityWorkspaces)
-    .leftJoin(opportunities, eq(opportunities.id, opportunityWorkspaces.opportunityId))
-    .leftJoin(customers, eq(customers.id, opportunities.customerId))
-    .orderBy(desc(opportunityWorkspaces.updatedAt))
-    .limit(limit)
+  const wsRows = await db.query.opportunityWorkspaces.findMany({
+    orderBy: (w, { desc }) => [desc(w.updatedAt)],
+    limit,
+  })
 
-  // Enrich with pending action count and running agent count
-  const wsIds = workspaces.map((w) => w.workspace.id)
+  // [P1-1] Batch-load opportunities and customers in 2 queries instead of N*2
+  const oppIds = wsRows.map((w) => w.opportunityId).filter(Boolean) as string[]
+  const allOpps = oppIds.length > 0
+    ? await db.query.opportunities.findMany({ where: (o, { inArray }) => inArray(o.id, oppIds) })
+    : []
+  const customerIds = allOpps.map((o) => o.customerId).filter(Boolean) as string[]
+  const allCustomers = customerIds.length > 0
+    ? await db.query.customers.findMany({ where: (c, { inArray }) => inArray(c.id, customerIds) })
+    : []
+
+  const wsIds = wsRows.map((w) => w.id)
   const allActions = wsIds.length > 0
     ? await db.query.agentActions.findMany({
         where: (a, { and, inArray }) => and(
@@ -39,13 +42,24 @@ export async function GET(req: NextRequest) {
       })
     : []
 
-  const enriched = workspaces.map((w) => ({
-    ...w,
-    pendingActionCount: allActions.filter((a) => a.workspaceId === w.workspace.id).length,
-    runningAgentCount: allThreads.filter((t) => t.workspaceId === w.workspace.id).length,
-  }))
+  const result = wsRows.map((w) => {
+    const opp = allOpps.find((o) => o.id === w.opportunityId) ?? null
+    const customer = opp ? allCustomers.find((c) => c.id === opp.customerId) ?? null : null
+    return {
+      workspace: w,
+      opportunity: opp,
+      customer,
+      pendingActionCount: allActions.filter((a) => a.workspaceId === w.id).length,
+      runningAgentCount: allThreads.filter((t) => t.workspaceId === w.id).length,
+    }
+  })
 
-  return NextResponse.json({ workspaces: enriched })
+  return NextResponse.json({ workspaces: result })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[workspaces GET]', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -75,11 +89,11 @@ export async function POST(req: NextRequest) {
     ownerUserId: ownerUserId ?? null,
   })
 
-  // Auto-create sales_copilot thread
+  // Auto-create coordinator thread
   await db.insert(agentThreads).values({
     id: generateId(),
     workspaceId,
-    agentType: 'sales_copilot',
+    agentType: 'coordinator',
     threadStatus: 'idle',
   })
 

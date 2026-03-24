@@ -4,15 +4,17 @@ import {
   opportunityWorkspaces,
   opportunities,
   customers,
+  channelPartners,
   agentThreads,
   agentRuns,
   agentDecisions,
   agentActions,
+  executionLogs,
   stateSnapshots,
   signalBindings,
   signalEvents,
 } from '@/db/schema'
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, inArray } from 'drizzle-orm'
 import { triggerStageAgents } from '@/lib/stage-engine'
 
 export async function GET(
@@ -32,12 +34,15 @@ export async function GET(
   const customer = opp
     ? await db.query.customers.findFirst({ where: eq(customers.id, opp.customerId) })
     : null
+  const channelPartner = opp?.channelPartnerId
+    ? await db.query.channelPartners.findFirst({ where: eq(channelPartners.id, opp.channelPartnerId) })
+    : null
 
   const threads = await db.query.agentThreads.findMany({
     where: eq(agentThreads.workspaceId, id),
   })
 
-  // Get latest run for each thread
+  // Get latest run for each thread, including execution details
   const threadDetails = await Promise.all(
     threads.map(async (thread) => {
       const latestRun = thread.latestRunId
@@ -46,7 +51,58 @@ export async function GET(
       const latestDecisions = latestRun
         ? await db.query.agentDecisions.findMany({ where: eq(agentDecisions.runId, latestRun.id) })
         : []
-      return { thread, latestRun, decisions: latestDecisions }
+
+      // Execution steps: actions from this run → their execution logs
+      let executionSteps: Array<{
+        actionId: string
+        executorType: string
+        executionStatus: string
+        responsePayloadJson: unknown
+        executedAt: string | null
+      }> = []
+      if (latestRun) {
+        const runActions = await db.query.agentActions.findMany({
+          where: eq(agentActions.runId, latestRun.id),
+        })
+        if (runActions.length > 0) {
+          const logs = await db.query.executionLogs.findMany({
+            where: (l, { inArray }) => inArray(l.actionId, runActions.map(a => a.id)),
+            orderBy: (l, { asc }) => [asc(l.executedAt)],
+          })
+          executionSteps = logs.map(l => ({
+            actionId: l.actionId ?? '',
+            executorType: l.executorType ?? '',
+            executionStatus: l.executionStatus ?? '',
+            responsePayloadJson: l.responsePayloadJson,
+            executedAt: l.executedAt?.toISOString() ?? null,
+          }))
+        }
+      }
+
+      // Input context summary: extract from inputContextJson
+      const ctx = latestRun?.inputContextJson as Record<string, unknown> | null
+      const inputContextSummary = ctx ? {
+        signalCount: Array.isArray(ctx.recentSignals) ? ctx.recentSignals.length : 0,
+        assetCount: Array.isArray(ctx.relevantAssets) ? ctx.relevantAssets.length : 0,
+        hasMemory: !!(ctx.agentMemory),
+        crossAgentSummary: ctx.crossAgentOutputs && typeof ctx.crossAgentOutputs === 'object'
+          ? Object.keys(ctx.crossAgentOutputs).join('、') + ' Agent 的输出'
+          : null,
+      } : null
+
+      return {
+        thread,
+        latestRun: latestRun ? {
+          id: latestRun.id,
+          reasoningSummary: latestRun.reasoningSummary,
+          outputSummary: latestRun.outputSummary,
+          runStatus: latestRun.runStatus,
+          startedAt: latestRun.startedAt?.toISOString() ?? null,
+          inputContextSummary,
+          executionSteps,
+        } : null,
+        decisions: latestDecisions,
+      }
     })
   )
 
@@ -60,16 +116,21 @@ export async function GET(
     limit: 10,
   })
 
-  // 为每个待审批动作附加来源 Agent 类型
-  const pendingActionsWithAgent = await Promise.all(
-    pendingActions.map(async (action) => {
-      if (!action.runId) return { ...action, agentType: null }
-      const run = await db.query.agentRuns.findFirst({ where: eq(agentRuns.id, action.runId) })
-      if (!run?.threadId) return { ...action, agentType: null }
-      const thread = await db.query.agentThreads.findFirst({ where: eq(agentThreads.id, run.threadId) })
-      return { ...action, agentType: thread?.agentType ?? null }
-    })
-  )
+  // [P1-3] Batch-resolve agentType for pending actions — 1 query each for runs+threads instead of N*2
+  const runIds = pendingActions.map((a) => a.runId).filter(Boolean) as string[]
+  const pendingRuns = runIds.length > 0
+    ? await db.query.agentRuns.findMany({ where: (r, { inArray }) => inArray(r.id, runIds) })
+    : []
+  const threadIds = pendingRuns.map((r) => r.threadId).filter(Boolean) as string[]
+  const pendingThreads = threadIds.length > 0
+    ? await db.query.agentThreads.findMany({ where: (t, { inArray }) => inArray(t.id, threadIds) })
+    : []
+
+  const pendingActionsWithAgent = pendingActions.map((action) => {
+    const run = pendingRuns.find((r) => r.id === action.runId)
+    const thread = run ? pendingThreads.find((t) => t.id === run.threadId) : null
+    return { ...action, agentType: thread?.agentType ?? null }
+  })
 
   const lastSnapshot = workspace.lastSnapshotId
     ? await db.query.stateSnapshots.findFirst({
@@ -92,14 +153,42 @@ export async function GET(
       })
     : []
 
+  const completedActionsRaw = await db.query.agentActions.findMany({
+    where: (a, { and, eq, inArray }) =>
+      and(
+        eq(a.workspaceId, id),
+        inArray(a.actionStatus, ['completed', 'rejected', 'approved'])
+      ),
+    orderBy: (a, { desc }) => [desc(a.updatedAt)],
+    limit: 10,
+  })
+
+  // [P1-3] Same batch approach for completed actions
+  const compRunIds = completedActionsRaw.map((a) => a.runId).filter(Boolean) as string[]
+  const compRuns = compRunIds.length > 0
+    ? await db.query.agentRuns.findMany({ where: (r, { inArray }) => inArray(r.id, compRunIds) })
+    : []
+  const compThreadIds = compRuns.map((r) => r.threadId).filter(Boolean) as string[]
+  const compThreads = compThreadIds.length > 0
+    ? await db.query.agentThreads.findMany({ where: (t, { inArray }) => inArray(t.id, compThreadIds) })
+    : []
+
+  const completedActions = completedActionsRaw.map((action) => {
+    const run = compRuns.find((r) => r.id === action.runId)
+    const thread = run ? compThreads.find((t) => t.id === run.threadId) : null
+    return { ...action, agentType: thread?.agentType ?? null }
+  })
+
   return NextResponse.json({
     workspace,
     opportunity: opp,
     customer,
+    channelPartner,
     threads: threadDetails,
     pendingActions: pendingActionsWithAgent,
     lastSnapshot,
     recentSignals,
+    completedActions,
   })
 }
 

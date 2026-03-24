@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { LayoutDashboard, TrendingUp, AlertTriangle, Bot, Zap, Activity, Shield, XCircle, Trophy, TrendingDown } from 'lucide-react'
 import { healthScoreColor } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 interface DashboardData {
   workspaceCount: number
@@ -45,11 +46,20 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6">
+      <Breadcrumb items={[{ label: '治理配置' }, { label: '运行驾驶舱' }]} />
       <PageGuide
-        role="管理层"
-        what="全局运营数据总览：商机健康度、信号分布、AI 执行状态、进化反馈采纳率、赢单/输单分析"
-        firstStep="查看「风险商机」卡片，点击高风险商机名称直接进入该作战台处理"
         storageKey="dashboard"
+        contents={{
+          manager: {
+            roleLabel: '管理层',
+            purpose: '商机健康与系统运行驾驶舱',
+            whenToUse: '每天开始工作时，或收到风险告警时先来这里',
+            aiAlreadyDid: '已实时计算全局商机健康分、动作积压数、进化效果指标',
+            youDecide: '发现高风险战场后进入处理，或调整资源优先级',
+            nextStepLabel: '查看战场总览',
+            nextStepHref: '/workspace',
+          },
+        }}
       />
       <div className="flex items-center gap-3 mb-6">
         <LayoutDashboard className="w-5 h-5 text-blue-600" />

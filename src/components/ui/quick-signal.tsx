@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { usePathname } from 'next/navigation'
 import { MessageSquarePlus, X, Send, Mic } from 'lucide-react'
 
 const TEMPLATES = [
@@ -10,11 +11,17 @@ const TEMPLATES = [
   { label: '风险预警', text: '[客户名] 存在风险：' },
 ]
 
+// Pages that already have their own signal input — hide the FAB there
+const HIDE_ON_PATHS = ['/inbox']
+
 export function QuickSignalButton() {
+  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+
+  if (HIDE_ON_PATHS.some((p) => pathname.startsWith(p))) return null
 
   const handleSubmit = async () => {
     if (!content.trim()) return

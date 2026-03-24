@@ -10,11 +10,11 @@ import { runAgent, createOrGetThread } from '@/lib/agent-runtime'
 
 // 各阶段负责的数字员工（按优先级排序）
 const STAGE_AGENT_MAP: Record<string, AgentType[]> = {
-  '需求挖掘': ['sales_copilot'],
-  '方案设计': ['sales_copilot', 'presales_assistant'],
-  '招投标': ['tender_assistant', 'presales_assistant'],
-  '商务谈判': ['commercial', 'sales_copilot'],
-  '合同签订': ['commercial', 'handover'],
+  '需求挖掘': ['coordinator', 'sales'],
+  '方案设计': ['coordinator', 'presales_assistant'],
+  '招投标': ['coordinator', 'tender_assistant'],
+  '商务谈判': ['coordinator', 'sales'],
+  '合同签订': ['sales', 'handover'],
   '交付': ['handover', 'service_triage'],
   '售后': ['service_triage', 'asset_governance'],
 }
@@ -41,7 +41,7 @@ const STAGE_ALIASES: Record<string, string> = {
 
 export function getAgentsForStage(stage: string): AgentType[] {
   const normalizedStage = STAGE_ALIASES[stage] ?? stage
-  return STAGE_AGENT_MAP[normalizedStage] ?? ['sales_copilot']
+  return STAGE_AGENT_MAP[normalizedStage] ?? ['coordinator']
 }
 
 /**
@@ -84,7 +84,7 @@ export function triggerStageAgents(
 }
 
 /**
- * 高优先级信号绑定后自动触发 sales_copilot
+ * 高优先级信号绑定后自动触发 coordinator（AI项目经理）
  */
 export function triggerSignalAgent(
   workspaceId: string,
@@ -99,11 +99,11 @@ export function triggerSignalAgent(
 ): void {
   ;(async () => {
     try {
-      const threadId = await createOrGetThread(workspaceId, 'sales_copilot')
+      const threadId = await createOrGetThread(workspaceId, 'coordinator')
       await runAgent({
         threadId,
         workspaceId,
-        agentType: 'sales_copilot',
+        agentType: 'coordinator',
         triggerType: 'signal',
         triggerSignalId: signalId,
         context,

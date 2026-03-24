@@ -1,10 +1,12 @@
 import { minimaxChat } from '@/lib/minimax'
 import { db } from '@/db'
-import { agentRuns, agentDecisions, agentActions, agentThreads, stateSnapshots, agentRules, assets, assetUsages, agentPrompts } from '@/db/schema'
+import { agentRuns, agentDecisions, agentActions, agentThreads, stateSnapshots, agentRules, assets, assetUsages, agentPrompts, agentMemory, opportunityWorkspaces } from '@/db/schema'
 import { generateId } from '@/lib/utils'
 import type { AgentType, AgentRunResult, ActionType } from '@/types'
 import { eq, and, desc } from 'drizzle-orm'
 import { getAISettings } from '@/lib/ai-settings'
+import { notifyPendingApproval } from '@/lib/notify'
+import { createHash } from 'crypto'
 
 const client = null // replaced by minimaxChat
 
@@ -35,23 +37,49 @@ const BUSINESS_CONTEXT = `
 6. 渠道反馈频繁变化 / 渠道动作迟缓 → severity:3，渠道管理风险`
 
 export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
-  sales_copilot: `你是一名专业的销售推进数字员工，服务于工业VR安全培训公司的销售团队。
+  coordinator: `你是一名AI项目经理数字员工，负责统筹管理单个商机的整体推进。
+${BUSINESS_CONTEXT}
+
+## 你的核心职责
+- 读取商机全局上下文（阶段、健康度、历史信号、风险分），判断当前局势
+- 决定激活哪些专项数字员工（sales/presales_assistant/tender_assistant/handover），以及每人的任务重点
+- 输出对当前商机的整体判断（风险等级、推进建议、关键障碍）
+- 当局势明确时直接给出行动建议，不需要激活所有员工
+
+## 分配原则
+- sales（销售助手）：负责客户/渠道沟通推进、报价谈判、合同商务
+- presales_assistant（解决方案助手）：负责方案设计、技术需求、演示准备
+- tender_assistant（招标助手）：有招投标信号时激活，负责标书分析和投标任务拆解
+- handover（交付助手）：合同签订后激活，负责交接包和交付风险识别
+
+## 输出格式扩展
+在标准 JSON 基础上，actions 中增加一类特殊 type: "assign_agent"，payload 包含：
+- agentType: 要激活的员工类型
+- taskFocus: 该员工本次的重点任务描述
+- reason: 为什么激活这个员工
+
+输出必须是严格的 JSON 格式。`,
+
+  sales: `你是一名销售/商务助手数字员工，服务于工业VR安全培训公司的销售团队。
 ${BUSINESS_CONTEXT}
 
 ## 你的核心职责
 - 分析渠道/客户互动信号，判断商机推进状态和健康度
 - 识别商机停滞风险和推进机会，发出阶段性预警
 - 生成下一步行动建议和对客/对渠道沟通草稿
-- 判断当前所处阶段和推进置信度
+- 提供报价策略建议（对抗低价竞标的价值锚定策略）
+- 识别合同条款风险（知识产权、验收标准、售后条款）
+- 推进商务谈判建议，帮助销售坚守价值底线
 
 ## 各阶段关注重点
-- **真实需求分析阶段**：确认业务痛点（事故率/培训成本/安全合规要求），识别真实决策链，核实渠道信息真实性
-- **立项及预算申请阶段**：监控客户内部立项进展，确认预算落实和预算金额区间
-- **决策阶段**：警惕最终决策人突变，及时识别价格战信号并介入
+- **需求挖掘阶段**：确认业务痛点（事故率/培训成本/安全合规要求），识别真实决策链，核实渠道信息真实性
+- **方案设计阶段**：监控客户内部立项进展，确认预算落实和预算金额区间
+- **商务谈判阶段**：警惕最终决策人突变，识别价格战信号，优先用价值替代降价（增加培训场景数/延长服务期）
+- 当竞品报价明显低于我方时：发出 risk_alert，建议分析对方成本结构和服务差距
 
 输出必须是严格的 JSON 格式，包含 decisions（判断列表）和 actions（行动列表）。`,
 
-  presales_assistant: `你是一名售前助手数字员工，服务于工业VR安全培训公司的解决方案团队。
+  presales_assistant: `你是一名解决方案助手数字员工，服务于工业VR安全培训公司的解决方案团队。
 ${BUSINESS_CONTEXT}
 
 ## 你的核心职责
@@ -67,7 +95,7 @@ ${BUSINESS_CONTEXT}
 
 输出必须是严格的 JSON 格式。`,
 
-  tender_assistant: `你是一名招投标助手数字员工，服务于工业VR安全培训公司的商务团队。
+  tender_assistant: `你是一名招标助手数字员工，服务于工业VR安全培训公司的商务团队。
 ${BUSINESS_CONTEXT}
 
 ## 你的核心职责
@@ -84,22 +112,7 @@ ${BUSINESS_CONTEXT}
 
 输出必须是严格的 JSON 格式。`,
 
-  commercial: `你是一名商务助手数字员工，服务于工业VR安全培训公司的商务团队。
-${BUSINESS_CONTEXT}
-
-## 你的核心职责
-- 提供报价策略建议（对抗低价竞标的价值锚定策略）
-- 识别合同条款风险（知识产权、验收标准、售后条款）
-- 推进商务谈判建议，帮助销售坚守价值底线
-- 提示合同关键项（付款条件、交付节点、违约责任）
-
-## 价格谈判特别注意
-- 当出现价格压力时：优先建议用价值替代降价（增加培训场景数/延长服务期/提供专属案例支持）
-- 当竞品报价明显低于我方时：发出 risk_alert，建议分析对方成本结构和服务差距
-
-输出必须是严格的 JSON 格式。`,
-
-  handover: `你是一名交接助手数字员工，服务于工业VR安全培训公司的交付团队。
+  handover: `你是一名交付助手数字员工，服务于工业VR安全培训公司的交付团队。
 ${BUSINESS_CONTEXT}
 
 ## 你的核心职责
@@ -152,6 +165,7 @@ const OUTPUT_SCHEMA = `
 输出格式（严格 JSON）：
 {
   "summary": "本次运行的一句话总结",
+  "memorySummary": "本次分析最值得记住的1-2句关键结论（下次分析时会注入）",
   "decisions": [
     {
       "type": "stage_assessment|risk_alert|opportunity_found|blocker_identified|action_recommended",
@@ -166,6 +180,7 @@ const OUTPUT_SCHEMA = `
       "type": "create_task|create_collab|update_status|send_draft|escalate|create_snapshot|notify",
       "priority": 1-5,
       "requiresApproval": true|false,
+      "executorCategory": "authorization|execution|collaboration",
       "payload": {
         "title": "动作标题",
         "description": "动作描述",
@@ -173,7 +188,12 @@ const OUTPUT_SCHEMA = `
       }
     }
   ]
-}`
+}
+
+executorCategory 说明（必须按此分类）：
+- authorization：涉及报价/合同/外部承诺/重大资源投入，必须人来决策，requiresApproval=true
+- execution：生成文档/草稿/内部任务/数据查询，AI可自动执行，requiresApproval=false
+- collaboration：需要人去行动（打电话/开会/谈判），AI负责准备弹药材料，requiresApproval=true`
 
 interface AgentRunInput {
   threadId: string
@@ -184,6 +204,7 @@ interface AgentRunInput {
   context: {
     opportunity?: Record<string, unknown>
     customer?: Record<string, unknown>
+    channelPartner?: Record<string, unknown>
     recentSignals?: unknown[]
     recentDecisions?: unknown[]
     currentStage?: string
@@ -312,6 +333,38 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
     fewShotBlock = `\n\n## 历史纠偏示例（请参考，避免重复类似错误）\n${examples}`
   }
 
+  // Memory injection: load prior key conclusions for this workspace+agent
+  const memories = await db.query.agentMemory.findMany({
+    where: (m, { and, eq }) => and(
+      eq(m.workspaceId, input.workspaceId),
+      eq(m.agentType, input.agentType),
+    ),
+    orderBy: (m, { desc }) => [desc(m.updatedAt)],
+    limit: 3,
+  })
+  let memoryBlock = ''
+  if (memories.length > 0) {
+    const memLines = memories.map(m => `- ${m.memorySummary}`).join('\n')
+    memoryBlock = `\n\n## 你对这个商机的历史记忆（请结合这些上下文判断）\n${memLines}`
+  }
+
+  // Skills injection: load enabled tools for this agent and inject into system prompt
+  const enabledSkills = await db.query.agentSkills.findMany({
+    where: (s, { and, eq }) => and(eq(s.agentType, input.agentType), eq(s.enabled, true)),
+  })
+  let skillsBlock = ''
+  if (enabledSkills.length > 0) {
+    const { TOOLS } = await import('@/lib/tool-registry')
+    const skillLines = enabledSkills.map(s => {
+      const def = TOOLS.find(t => t.id === s.toolId)
+      if (!def) return null
+      return `- 工具 ID: ${def.id}（${def.name}）：${def.description}`
+    }).filter(Boolean)
+    if (skillLines.length > 0) {
+      skillsBlock = `\n\n## 你可以调用的工具技能\n当需要真实执行时，生成 actionType="call_tool" 的动作，payload 包含 toolId 和 toolInput 字段。\n${skillLines.join('\n')}`
+    }
+  }
+
   try {
     const aiSettings = await getAISettings()
     const isDeep = aiSettings.agentOutputDepth === 'deep'
@@ -320,13 +373,14 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
 
     const rawOutput = await minimaxChat({
       system: systemPrompt + '\n\n' + OUTPUT_SCHEMA + deepSchemaAddition,
-      user: `请基于以下上下文进行分析并输出 JSON：\n\n${contextText}${assetsBlock}${crossAgentBlock}${fewShotBlock}`,
+      user: `请基于以下上下文进行分析并输出 JSON：\n\n${contextText}${assetsBlock}${crossAgentBlock}${memoryBlock}${fewShotBlock}${skillsBlock}`,
       maxTokens: aiSettings.agentMaxTokens,
     })
 
     // Parse JSON from response
     let parsed: {
       summary: string
+      memorySummary?: string
       decisions: Array<{
         type: string
         label: string
@@ -338,6 +392,7 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
         type: ActionType
         priority: number
         requiresApproval: boolean
+        executorCategory?: string
         payload: Record<string, unknown>
       }>
     }
@@ -368,10 +423,30 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
       })
     }
 
-    // Save actions
+    // Save actions (with dedup: skip if same workspace+actionType+title already pending)
     const savedActions = []
     for (const a of parsed.actions) {
+      const title = (a.payload?.title as string) ?? ''
+      const dedupHash = createHash('md5')
+        .update(`${input.workspaceId}:${a.type}:${title}`)
+        .digest('hex')
+
+      // Check for existing active action with same hash
+      const existing = await db.query.agentActions.findFirst({
+        where: (act, { and, eq, inArray }) => and(
+          eq(act.dedupHash, dedupHash),
+          inArray(act.actionStatus, ['pending', 'pending_approval']),
+        ),
+      })
+      if (existing) continue  // skip duplicate
+
       const actionId = generateId()
+      // Determine executorCategory: use AI-provided or infer from actionType
+      const category = (a as any).executorCategory ??
+        (a.type === 'send_draft' || a.type === 'create_snapshot' ? 'execution' :
+         a.type === 'create_collab' ? 'collaboration' :
+         a.requiresApproval ? 'authorization' : 'execution')
+
       await db.insert(agentActions).values({
         id: actionId,
         runId,
@@ -382,6 +457,8 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
         executionMode: a.requiresApproval ? 'approval_required' : 'auto',
         approvalRequired: a.requiresApproval,
         actionStatus: a.requiresApproval ? 'pending_approval' : 'pending',
+        executorCategory: category,
+        dedupHash,
       })
       savedActions.push({ ...a, id: actionId })
     }
@@ -414,6 +491,70 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
       .update(agentThreads)
       .set({ latestRunId: runId, lastActiveAt: new Date(), threadStatus: 'idle' })
       .where(eq(agentThreads.id, input.threadId))
+
+    // Persist memory summary for future runs
+    if (parsed.memorySummary) {
+      const existingMemory = await db.query.agentMemory.findFirst({
+        where: (m, { and, eq }) => and(
+          eq(m.workspaceId, input.workspaceId),
+          eq(m.agentType, input.agentType),
+        ),
+      })
+      if (existingMemory) {
+        await db.update(agentMemory)
+          .set({ memorySummary: parsed.memorySummary, sourceRunId: runId, updatedAt: new Date() })
+          .where(eq(agentMemory.id, existingMemory.id))
+      } else {
+        await db.insert(agentMemory).values({
+          id: generateId(),
+          workspaceId: input.workspaceId,
+          agentType: input.agentType,
+          memorySummary: parsed.memorySummary,
+          sourceRunId: runId,
+        })
+      }
+    }
+
+    // [P1-5] Recalculate health/risk/block scores based on decisions and pending actions
+    const allPendingActions = await db.query.agentActions.findMany({
+      where: (a, { and, eq, inArray }) => and(
+        eq(a.workspaceId, input.workspaceId),
+        inArray(a.actionStatus, ['pending', 'pending_approval'])
+      ),
+    })
+    const allDecisions = await db.query.agentDecisions.findMany({
+      where: (d, { eq }) => eq(d.runId, runId),
+    })
+    const maxSeverity = allDecisions.length > 0
+      ? Math.max(...allDecisions.map((d) => d.severityLevel ?? 1))
+      : 1
+    const pendingCount = allPendingActions.length
+    // riskScore: severity drives risk (1-5 → 0-80), each unresolved action adds 2pts
+    const newRiskScore = Math.min(100, Math.round((maxSeverity - 1) * 20 + pendingCount * 2))
+    // healthScore: inverse of risk, floor at 20
+    const newHealthScore = Math.max(20, 100 - newRiskScore)
+    // blockScore: count of blocker/escalation decisions × 20
+    const blockerCount = allDecisions.filter((d) =>
+      d.decisionType === 'blocker_identified' || d.decisionType === 'risk_alert'
+    ).length
+    const newBlockScore = Math.min(100, blockerCount * 20)
+
+    await db.update(opportunityWorkspaces)
+      .set({ healthScore: newHealthScore, riskScore: newRiskScore, blockScore: newBlockScore, updatedAt: new Date() })
+      .where(eq(opportunityWorkspaces.id, input.workspaceId))
+
+    // Push notification if any actions require approval
+    const pendingActions = savedActions.filter(a => a.requiresApproval)
+    if (pendingActions.length > 0) {
+      const maxPriority = Math.max(...pendingActions.map(a => a.priority ?? 3))
+      notifyPendingApproval({
+        agentType: input.agentType,
+        opportunityName: (input.context.opportunity?.name as string) ?? '未知商机',
+        actionIds: pendingActions.map(a => a.id),
+        workspaceId: input.workspaceId,
+        priority: maxPriority,
+      }).catch(e => console.error('[notify] 推送失败:', e))
+    }
 
     return {
       runId,

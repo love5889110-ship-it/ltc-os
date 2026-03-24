@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, Search, BookOpen, Package, FileText, Briefcase, MessageSquare, Lightbulb, X, Star, TrendingUp } from 'lucide-react'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 type AssetType = 'product' | 'solution' | 'case' | 'template' | 'script' | 'knowledge'
 
@@ -185,11 +186,29 @@ export default function AssetsPage() {
 
         {/* Asset list */}
         <div className="flex-1 overflow-auto p-6">
+          <Breadcrumb items={[{ label: '知识进化' }, { label: '知识资产' }]} />
           <PageGuide
-            role="解方经理 / 全员"
-            what="AI 数字员工的「记忆库」：产品资料、成功案例、竞品话术、方案模板、招投标资质清单"
-            firstStep="左侧选择「竞品话术」或「成功案例」，找到和当前商机行业匹配的内容，查看后可反馈质量"
             storageKey="assets"
+            contents={{
+              solution: {
+                roleLabel: '方案经理',
+                purpose: '注入 AI 的方案与素材库',
+                whenToUse: '上传新方案/案例时，或检查 AI 是否已使用最新素材时',
+                aiAlreadyDid: '在分析商机时自动调用匹配的素材注入决策上下文',
+                youDecide: '上传新内容、标注质量、停用过时素材',
+                nextStepLabel: '查看战场总览',
+                nextStepHref: '/workspace',
+              },
+              all: {
+                roleLabel: '全员',
+                purpose: 'AI 数字员工的知识记忆库',
+                whenToUse: '想了解 AI 在用哪些素材，或需要上传新资料时',
+                aiAlreadyDid: '已自动引用库中内容优化判断和草稿',
+                youDecide: '维护素材质量，上传和标注',
+                nextStepLabel: '查看进化中心',
+                nextStepHref: '/evolution',
+              },
+            }}
           />
           {loading ? (
             <div className="flex items-center justify-center h-32 text-gray-400 text-sm">加载中...</div>

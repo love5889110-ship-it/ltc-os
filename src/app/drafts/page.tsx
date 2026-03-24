@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { FileEdit, CheckCircle, X, ChevronDown, ChevronUp, Clipboard, Send } from 'lucide-react'
 import { formatRelativeTime } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 interface Draft {
   id: string
@@ -41,6 +44,21 @@ export default function DraftsPage() {
   const [activeTab, setActiveTab] = useState<'pending_review' | 'approved' | 'sent' | 'archived'>('pending_review')
   const [editedContent, setEditedContent] = useState<Record<string, string>>({})
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  // [P1-8] Debounced auto-save when user edits draft content
+  const handleContentChange = useCallback((draftId: string, value: string) => {
+    setEditedContent((prev) => ({ ...prev, [draftId]: value }))
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(async () => {
+      await fetch('/api/drafts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draftId, action: 'save_content', content: value }),
+      })
+    }, 1000)
+  }, [])
 
   const load = async () => {
     setLoading(true)
@@ -64,6 +82,11 @@ export default function DraftsPage() {
     setProcessingId(null)
     setReviewNote('')
     setExpandedId(null)
+    // [P2-3] Toast feedback
+    if (action === 'approve') setToast('草稿已批准 ✓ 可前往任务中心跟进后续执行')
+    else if (action === 'reject') setToast('已驳回并沉淀训练样本')
+    else if (action === 'mark_sent') setToast('已标记为已发送')
+    setTimeout(() => setToast(null), 4000)
     load()
   }
 
@@ -88,10 +111,16 @@ export default function DraftsPage() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* [P2-3] Toast notification */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
+          {toast}
+        </div>
+      )}
       <div className="bg-white border-b px-6 py-4">
         <div className="flex items-center gap-2">
           <FileEdit className="w-5 h-5 text-blue-600" />
-          <h1 className="text-lg font-semibold">草稿中心</h1>
+          <h1 className="text-lg font-semibold">对客草稿</h1>
           {pendingCount > 0 && (
             <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full">
               {pendingCount} 待审阅
@@ -120,11 +149,21 @@ export default function DraftsPage() {
       </div>
 
       <div className="flex-1 overflow-auto p-6">
+        <Breadcrumb items={[{ label: '动作处理' }, { label: '对客草稿' }]} />
         <PageGuide
-          role="销售"
-          what="AI 起草的邮件、方案、微信消息等，需销售审阅后才能发出，销售可直接编辑内容"
-          firstStep="在「待审阅」标签找到草稿，点击展开查看内容，可以直接修改，满意后点击「审批通过」"
           storageKey="drafts"
+          contents={{
+            sales: {
+              roleLabel: '销售',
+              purpose: 'AI 起草的对客内容等你审阅',
+              whenToUse: '审批通过 send_draft 类动作后，或收到草稿通知时来这里',
+              aiAlreadyDid: '已根据商机上下文、客户画像、知识资产库起草完整内容',
+              youDecide: '审阅内容是否准确，可直接编辑，满意后批准',
+              dontDo: '系统不会自动发出，批准后需你手动发给客户',
+              nextStepLabel: '返回战场总览',
+              nextStepHref: '/workspace',
+            },
+          }}
         />
         {filteredDrafts.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-gray-400">
@@ -156,6 +195,14 @@ export default function DraftsPage() {
                         </span>
                       </div>
                       <h3 className="text-sm font-medium text-gray-800">{draft.title}</h3>
+                      {draft.workspaceId && (
+                        <Link
+                          href={`/workspace/${draft.workspaceId}`}
+                          className="inline-flex items-center text-[10px] text-blue-500 hover:text-blue-700 hover:underline mt-0.5"
+                        >
+                          ↩ 来源战场：{draft.workspaceId.slice(-6)}
+                        </Link>
+                      )}
                       {!isExpanded && (
                         <p className="text-xs text-gray-500 mt-1 line-clamp-2">{currentContent}</p>
                       )}
@@ -191,7 +238,7 @@ export default function DraftsPage() {
                       {/* Inline editable textarea */}
                       <textarea
                         value={currentContent}
-                        onChange={(e) => setEditedContent((prev) => ({ ...prev, [draft.id]: e.target.value }))}
+                        onChange={(e) => handleContentChange(draft.id, e.target.value)}
                         rows={10}
                         className="w-full border rounded-lg px-3 py-2 text-sm text-gray-700 leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y bg-gray-50"
                       />

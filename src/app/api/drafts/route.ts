@@ -25,11 +25,18 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   const body = await req.json()
-  const { draftId, action, reviewNote, operatorUserId } = body
-  // action: 'approve' | 'reject'
+  const { draftId, action, reviewNote, operatorUserId, content } = body
+  // action: 'approve' | 'reject' | 'mark_sent' | 'save_content'
 
   const draft = await db.query.drafts.findFirst({ where: eq(drafts.id, draftId) })
   if (!draft) return NextResponse.json({ error: '草稿不存在' }, { status: 404 })
+
+  // [P1-8] Inline content save
+  if (action === 'save_content') {
+    if (content === undefined) return NextResponse.json({ error: '缺少 content' }, { status: 400 })
+    await db.update(drafts).set({ content, updatedAt: new Date() }).where(eq(drafts.id, draftId))
+    return NextResponse.json({ success: true })
+  }
 
   if (action === 'approve') {
     await db
@@ -46,6 +53,18 @@ export async function PATCH(req: NextRequest) {
       afterJson: { status: 'approved' },
       reasonText: reviewNote ?? null,
       operatorUserId: operatorUserId ?? null,
+    })
+
+    // [P0-2] Write feedbackSample — approval is a positive training signal
+    await db.insert(feedbackSamples).values({
+      id: generateId(),
+      sourceType: 'draft_approval',
+      sourceObjectId: draftId,
+      workspaceId: draft.workspaceId,
+      originalOutputJson: { title: draft.title, content: draft.content.slice(0, 500) },
+      feedbackLabel: 'accepted',
+      feedbackReasonCode: 'draft_review',
+      reusableFlag: true,
     })
   } else if (action === 'reject') {
     await db

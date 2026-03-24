@@ -10,7 +10,7 @@ import { generateId } from '@/lib/utils'
 // Also handles initial setup: { apiKey, clientId } to create/update connector
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
-  const { connectorId, apiKey, clientId } = body
+  const { connectorId, apiKey, clientId, keyword } = body
 
   let resolvedId = connectorId as string | undefined
 
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await syncGetNote(resolvedId)
+    const result = await syncGetNote(resolvedId, { keyword: keyword || undefined })
     return NextResponse.json({ success: true, connectorId: resolvedId, ...result })
   } catch (e) {
     return NextResponse.json(

@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { Zap, CheckCircle, XCircle, Clock, RefreshCw, AlertTriangle } from 'lucide-react'
 import { ACTION_TYPE_LABELS, statusColor, formatRelativeTime } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
+import { Breadcrumb } from '@/components/ui/breadcrumb'
 
 interface Action {
   id: string
@@ -17,6 +19,8 @@ interface Action {
   failedAt: string | null
   createdAt: string | null
   actionPayloadJson: { title?: string; description?: string } | null
+  resultMessage: string | null
+  executionLogStatus: string | null
 }
 
 export default function ExecutionPage() {
@@ -56,16 +60,26 @@ export default function ExecutionPage() {
 
   return (
     <div className="p-6">
+      <Breadcrumb items={[{ label: '动作处理' }, { label: '执行日志' }]} />
       <PageGuide
-        role="全员"
-        what="展示 AI 数字员工产生的所有动作执行记录（发草稿、创任务、更新状态等）"
-        firstStep="查看状态为「失败」或「待审批」的动作，确认是否需要人工处理"
         storageKey="execution"
+        contents={{
+          all: {
+            roleLabel: '全员',
+            purpose: '所有 AI 动作的执行日志',
+            whenToUse: '审批动作后查看执行结果，或排查失败原因时',
+            aiAlreadyDid: '已记录每条动作的执行状态、重试次数和结果',
+            youDecide: '关注失败状态，回到来源战场处理异常',
+            dontDo: '这是日志页，不是主操作页，不需要每天主动来',
+            nextStepLabel: '查看待审批动作',
+            nextStepHref: '/intervention',
+          },
+        }}
       />
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <Zap className="w-5 h-5 text-blue-600" />
-          <h1 className="text-lg font-semibold">执行中心</h1>
+          <h1 className="text-lg font-semibold">执行日志</h1>
         </div>
         <button onClick={load} className="p-2 rounded-lg hover:bg-gray-100">
           <RefreshCw className="w-4 h-4 text-gray-500" />
@@ -116,15 +130,18 @@ export default function ExecutionPage() {
               <tr>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">动作类型</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">内容</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">来源战场</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">状态</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">执行者</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">优先级</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">重试</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">执行结果</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">时间</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {actions.map((action) => (
-                <tr key={action.id} className="hover:bg-gray-50">
+                <tr key={action.id} className={`hover:bg-gray-50 ${action.actionStatus === 'failed' ? 'bg-red-50/30' : ''}`}>
                   <td className="px-4 py-3">
                     <span className="font-medium text-gray-700">
                       {ACTION_TYPE_LABELS[action.actionType] ?? action.actionType}
@@ -133,16 +150,42 @@ export default function ExecutionPage() {
                   <td className="px-4 py-3 text-gray-600 max-w-xs truncate">
                     {action.actionPayloadJson?.title ?? action.actionPayloadJson?.description ?? '—'}
                   </td>
+                  <td className="px-4 py-3 text-xs">
+                    {action.workspaceId ? (
+                      <Link
+                        href={`/workspace/${action.workspaceId}`}
+                        className="text-blue-500 hover:text-blue-700 hover:underline"
+                      >
+                        {action.workspaceId.slice(-6)}
+                        {action.actionStatus === 'failed' && <span className="ml-1 text-red-500">← 返回</span>}
+                      </Link>
+                    ) : '—'}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded text-xs ${statusColor(action.actionStatus)}`}>
                       {action.actionStatus}
                     </span>
+                  </td>
+                  {/* [P2-4] executorType column */}
+                  <td className="px-4 py-3 text-xs">
+                    {action.executorType === 'ai'
+                      ? <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">AI</span>
+                      : action.executorType === 'human'
+                      ? <span className="bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">人工</span>
+                      : <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500">P{action.actionPriority ?? '—'}</td>
                   <td className="px-4 py-3 text-xs text-gray-500">
                     {(action.retryCount ?? 0) > 0 ? (
                       <span className="text-orange-500">{action.retryCount}次</span>
                     ) : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-600 max-w-[180px] truncate">
+                    {action.resultMessage
+                      ? <span title={action.resultMessage}>{action.resultMessage}</span>
+                      : action.executionLogStatus === 'failed'
+                      ? <span className="text-red-500">执行失败</span>
+                      : <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-400">
                     {formatRelativeTime(action.executedAt ?? action.createdAt)}

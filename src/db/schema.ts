@@ -13,7 +13,7 @@ import {
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 export const connectorTypeEnum = pgEnum('connector_type', [
-  'get_note', 'recording', 'dingtalk', 'file_ocr', 'wechat_proxy', 'manual',
+  'get_note', 'recording', 'dingtalk', 'file_ocr', 'wechat_proxy', 'manual', 'wecom',
 ])
 
 export const authStatusEnum = pgEnum('auth_status', ['pending', 'authorized', 'expired', 'error'])
@@ -32,8 +32,8 @@ export const bindingStatusEnum = pgEnum('binding_status', [
 ])
 
 export const agentTypeEnum = pgEnum('agent_type', [
-  'sales_copilot', 'presales_assistant', 'tender_assistant',
-  'commercial', 'handover', 'service_triage', 'asset_governance',
+  'coordinator', 'sales', 'presales_assistant', 'tender_assistant',
+  'handover', 'service_triage', 'asset_governance',
 ])
 
 export const triggerTypeEnum = pgEnum('trigger_type', [
@@ -46,7 +46,7 @@ export const runStatusEnum = pgEnum('run_status', [
 
 export const actionTypeEnum = pgEnum('action_type', [
   'create_task', 'create_collab', 'update_status', 'send_draft',
-  'escalate', 'create_snapshot', 'notify',
+  'escalate', 'create_snapshot', 'notify', 'call_tool',
 ])
 
 export const executionModeEnum = pgEnum('execution_mode', [
@@ -85,7 +85,9 @@ export const customers = pgTable('customers', {
   name: text('name').notNull(),
   industry: text('industry'),
   region: text('region'),
+  profileJson: jsonb('profile_json').default({}),
   createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
 })
 
 export const contacts = pgTable('contacts', {
@@ -98,6 +100,15 @@ export const contacts = pgTable('contacts', {
   createdAt: timestamp('created_at').defaultNow(),
 })
 
+export const channelPartners = pgTable('channel_partners', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  region: text('region'),
+  profileJson: jsonb('profile_json').default({}),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
 export const opportunities = pgTable('opportunities', {
   id: text('id').primaryKey(),
   customerId: text('customer_id').notNull().references(() => customers.id),
@@ -105,6 +116,8 @@ export const opportunities = pgTable('opportunities', {
   stage: text('stage').notNull().default('初接触'),
   amount: real('amount'),
   ownerUserId: text('owner_user_id'),
+  channelPartner: text('channel_partner'),
+  channelPartnerId: text('channel_partner_id').references(() => channelPartners.id),
   status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -223,6 +236,9 @@ export const agentActions = pgTable('agent_actions', {
   executionMode: executionModeEnum('execution_mode').notNull().default('approval_required'),
   approvalRequired: boolean('approval_required').notNull().default(true),
   actionStatus: actionStatusEnum('action_status').notNull().default('pending'),
+  // 执行分类：authorization=授权类（需人决策）, execution=执行类（AI自动执行）, collaboration=协作类（人执行+AI准备材料）
+  executorCategory: text('executor_category').notNull().default('execution'),
+  dedupHash: text('dedup_hash'),  // workspaceId+actionType+title 去重
   executorType: text('executor_type'),
   scheduledAt: timestamp('scheduled_at'),
   executedAt: timestamp('executed_at'),
@@ -426,4 +442,65 @@ export const kvSettings = pgTable('kv_settings', {
   value: text('value').notNull(),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
+
+// ─── Agent Memory（跨会话记忆）────────────────────────────────────────────────
+// 每次 Agent 运行后提炼关键结论，下次运行时注入 system prompt
+
+export const agentMemory = pgTable('agent_memory', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => opportunityWorkspaces.id),
+  agentType: agentTypeEnum('agent_type').notNull(),
+  memorySummary: text('memory_summary').notNull(),  // 1-3句关键结论
+  sourceRunId: text('source_run_id').references(() => agentRuns.id),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+// ─── Agent Skills（技能装载）──────────────────────────────────────────────────
+// 记录每个数字员工装载了哪些工具技能（对应 tool-registry.ts 中的 ToolDef.id）
+
+export const agentSkills = pgTable('agent_skills', {
+  id: text('id').primaryKey(),
+  agentType: agentTypeEnum('agent_type').notNull(),
+  toolId: text('tool_id').notNull(),   // 对应 tool-registry.ts 中的 ToolDef.id
+  enabled: boolean('enabled').default(true).notNull(),
+  config: jsonb('config'),             // 覆盖参数（如指定钉钉群 ID、企业微信 agentId）
+  skillTemplateId: text('skill_template_id'),  // 关联上架技能（可选）
+  defaultParamsJson: jsonb('default_params_json').default({}),  // 沙盘训练出的默认参数
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+// ── 技能沙盘（训练会话）────────────────────────────────────────────────────────
+
+export const skillSandboxes = pgTable('skill_sandboxes', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  toolSource: text('tool_source').notNull().default('http'),  // 'http'|'code'|'skill_json'|'builtin'
+  skillSpecJson: jsonb('skill_spec_json').default({}),        // 技能规格（name/description/inputSchema）
+  executionConfigJson: jsonb('execution_config_json').default({}),  // 执行配置
+  chatHistoryJson: jsonb('chat_history_json').default([]),    // 对话历史
+  testRoundsJson: jsonb('test_rounds_json').default([]),      // 测试记录
+  bestParamsJson: jsonb('best_params_json'),                  // 标记最优的参数
+  status: text('status').notNull().default('drafting'),       // 'drafting'|'published'
+  publishedSkillId: text('published_skill_id'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+// ── 技能库（已上架技能）──────────────────────────────────────────────────────
+
+export const skillTemplates = pgTable('skill_templates', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  category: text('category').notNull().default('data'),
+  toolSource: text('tool_source').notNull().default('http'),
+  skillSpecJson: jsonb('skill_spec_json').notNull().default({}),
+  executionConfigJson: jsonb('execution_config_json').notNull().default({}),
+  sourceSandboxId: text('source_sandbox_id'),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+})
+
 

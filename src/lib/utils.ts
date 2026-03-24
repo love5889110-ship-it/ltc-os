@@ -48,13 +48,15 @@ export const SIGNAL_STATUS_LABELS: Record<string, string> = {
 }
 
 export const AGENT_LABELS: Record<string, string> = {
-  sales_copilot: '销售推进',
-  presales_assistant: '售前助手',
-  tender_assistant: '招投标助手',
-  commercial: '商务助手',
-  handover: '交接助手',
-  service_triage: '服务分诊',
-  asset_governance: '资产治理',
+  coordinator: '销售总控 Agent',
+  sales_copilot: '销售 Agent',
+  sales: '销售 Agent',
+  presales_assistant: '解决方案 Agent',
+  tender_assistant: '招标 Agent',
+  commercial: '商务 Agent',
+  handover: '交付 Agent',
+  service_triage: '服务 Agent',
+  asset_governance: '资产管理 Agent',
 }
 
 export const ACTION_TYPE_LABELS: Record<string, string> = {
@@ -65,6 +67,17 @@ export const ACTION_TYPE_LABELS: Record<string, string> = {
   escalate: '升级处理',
   create_snapshot: '生成快照',
   notify: '发送通知',
+  call_tool: '调用工具',
+}
+
+export const SIGNAL_SOURCE_LABELS: Record<string, string> = {
+  get_note: '录音笔记',
+  recording: '录音',
+  dingtalk: '钉钉',
+  wechat_proxy: '微信',
+  wecom: '企业微信',
+  manual: '手动录入',
+  file_ocr: '文件',
 }
 
 export function signalTypeColor(type: string): string {

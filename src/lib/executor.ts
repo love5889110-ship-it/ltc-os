@@ -6,6 +6,7 @@ import { db } from '@/db'
 import {
   agentActions,
   agentRuns,
+  agentThreads,
   executionLogs,
   stateSnapshots,
   opportunityWorkspaces,
@@ -15,11 +16,15 @@ import {
   drafts,
   assets,
   notifications,
+  connectorInstances,
+  agentSkills,
 } from '@/db/schema'
 import { generateId } from '@/lib/utils'
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, and } from 'drizzle-orm'
 import { minimaxChat } from '@/lib/minimax'
 import { getAISettings } from '@/lib/ai-settings'
+import { pushNotification } from '@/lib/notify'
+import { getToolById } from '@/lib/tool-registry'
 
 export type ExecutionResult =
   | { success: true; result: Record<string, unknown> }
@@ -72,6 +77,9 @@ export async function executeAction(actionId: string): Promise<ExecutionResult> 
         break
       case 'create_collab':
         result = await executeCreateCollab(action.workspaceId, actionId, payload)
+        break
+      case 'call_tool':
+        result = await executeCallTool(action.workspaceId, payload, action.runId ?? undefined)
         break
       default:
         result = { message: `动作类型 ${action.actionType} 已记录，等待人工处理` }
@@ -312,22 +320,6 @@ async function executeEscalate(
   }
 }
 
-async function getFeishuWebhookUrl(): Promise<string | null> {
-  const settings = await getAISettings()
-  return settings.feishuWebhookUrl ?? null
-}
-
-async function sendFeishuMessage(url: string, text: string): Promise<void> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ msg_type: 'text', content: { text } }),
-  })
-  if (!res.ok) {
-    throw new Error(`飞书 Webhook 返回 ${res.status}`)
-  }
-}
-
 async function executeNotify(
   workspaceId: string,
   actionId: string,
@@ -335,44 +327,35 @@ async function executeNotify(
 ): Promise<Record<string, unknown>> {
   const title = (payload.title as string) ?? '通知'
   const desc = (payload.description as string) ?? ''
-  const feishuUrl = await getFeishuWebhookUrl()
-  let channel = 'internal'
-  let deliveryStatus = 'sent'
-  let errorMessage: string | null = null
+  const urgent = (payload.priority as number ?? 3) >= 4
 
-  if (feishuUrl) {
-    try {
-      await sendFeishuMessage(feishuUrl, `【数字员工通知】${title}\n${desc}`)
-      channel = 'feishu'
-    } catch (err) {
-      channel = 'feishu'
-      deliveryStatus = 'failed'
-      errorMessage = err instanceof Error ? err.message : String(err)
-    }
-  }
+  const result = await pushNotification({
+    title: `【数字员工通知】${title}`,
+    body: desc,
+    actionUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001'}/intervention`,
+    actionLabel: '前往干预台',
+    urgent,
+  })
 
   await db.insert(notifications).values({
     id: generateId(),
     workspaceId,
     actionId,
-    channel,
+    channel: result.channel,
     title,
     content: desc,
-    deliveryStatus,
-    errorMessage,
+    deliveryStatus: result.success ? 'sent' : 'failed',
+    errorMessage: result.error ?? null,
   })
 
-  // 飞书发送失败时抛出异常，让上层 executeAction 记录为 failed
-  if (deliveryStatus === 'failed') {
-    throw new Error(`飞书通知发送失败：${errorMessage}`)
+  if (!result.success) {
+    throw new Error(`通知发送失败（${result.channel}）：${result.error}`)
   }
 
   return {
-    status: deliveryStatus,
-    channel,
-    message: channel === 'feishu' && deliveryStatus === 'sent'
-      ? '通知已发送至飞书'
-      : '通知已记录（未配置飞书 Webhook）',
+    status: 'sent',
+    channel: result.channel,
+    message: `通知已发送至 ${result.channel}`,
   }
 }
 
@@ -383,43 +366,102 @@ async function executeCreateCollab(
 ): Promise<Record<string, unknown>> {
   const title = (payload.title as string) ?? '协作请求'
   const desc = (payload.description as string) ?? ''
-  const feishuUrl = await getFeishuWebhookUrl()
-  let channel = 'internal'
-  let deliveryStatus = 'sent'
-  let errorMessage: string | null = null
+  const urgent = (payload.priority as number ?? 3) >= 4
 
-  if (feishuUrl) {
-    try {
-      await sendFeishuMessage(feishuUrl, `【协作请求】${title}\n${desc}\n请查看 ltc-os 系统处理。`)
-      channel = 'feishu'
-    } catch (err) {
-      channel = 'feishu'
-      deliveryStatus = 'failed'
-      errorMessage = err instanceof Error ? err.message : String(err)
-    }
-  }
+  const result = await pushNotification({
+    title: `【协作请求】${title}`,
+    body: `${desc}\n请查看系统处理。`,
+    actionUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001'}/intervention`,
+    actionLabel: '前往处理',
+    urgent,
+  })
 
   await db.insert(notifications).values({
     id: generateId(),
     workspaceId,
     actionId,
-    channel,
+    channel: result.channel,
     title,
     content: desc,
-    deliveryStatus,
-    errorMessage,
+    deliveryStatus: result.success ? 'sent' : 'failed',
+    errorMessage: result.error ?? null,
   })
 
-  // 飞书发送失败时抛出异常，让上层 executeAction 记录为 failed
-  if (deliveryStatus === 'failed') {
-    throw new Error(`飞书协作请求发送失败：${errorMessage}`)
+  if (!result.success) {
+    throw new Error(`协作请求发送失败（${result.channel}）：${result.error}`)
   }
 
   return {
-    status: deliveryStatus,
-    channel,
-    message: channel === 'feishu' && deliveryStatus === 'sent'
-      ? '协作请求已发送至飞书'
-      : '协作请求已记录（未配置飞书 Webhook）',
+    status: 'sent',
+    channel: result.channel,
+    message: `协作请求已发送至 ${result.channel}`,
+  }
+}
+
+// ── call_tool 执行器 ──────────────────────────────────────────────────────────
+
+async function executeCallTool(
+  workspaceId: string,
+  payload: Record<string, unknown>,
+  runId?: string
+): Promise<Record<string, unknown>> {
+  const toolId = payload.toolId as string | undefined
+  const toolInput = (payload.toolInput as Record<string, unknown>) ?? {}
+
+  if (!toolId) throw new Error('call_tool 动作缺少 toolId 参数')
+
+  const tool = getToolById(toolId)
+  if (!tool) throw new Error(`工具 "${toolId}" 不存在，请检查 tool-registry.ts`)
+
+  // ACL：检查 Agent 是否已装载此工具
+  if (runId) {
+    const run = await db.query.agentRuns.findFirst({
+      where: eq(agentRuns.id, runId),
+    })
+    if (run?.threadId) {
+      const thread = await db.query.agentThreads.findFirst({
+        where: eq(agentThreads.id, run.threadId),
+      })
+      if (thread?.agentType) {
+        const skill = await db.query.agentSkills.findFirst({
+          where: and(
+            eq(agentSkills.agentType, thread.agentType as any),
+            eq(agentSkills.toolId, toolId),
+            eq(agentSkills.enabled, true)
+          ),
+        })
+        if (!skill) {
+          return {
+            success: false,
+            message: `Agent「${thread.agentType}」未装载工具「${tool.name}」，请在技能工坊中装载后重试`,
+          }
+        }
+      }
+    }
+  }
+
+  // 若工具需要连接器，查询授权配置
+  let connectorConfig: Record<string, unknown> | undefined
+  if (tool.requiresConnector) {
+    const connector = await db.query.connectorInstances.findFirst({
+      where: (c, { and, eq }) => and(
+        eq(c.connectorType, tool.requiresConnector as any),
+        eq(c.enabled, true)
+      ),
+    })
+    if (!connector) {
+      return { success: false, message: `工具「${tool.name}」需要先在「连接器与模型」中完成 ${tool.requiresConnector} 授权` }
+    }
+    connectorConfig = (connector.configJson as Record<string, unknown>) ?? undefined
+  }
+
+  // 将 workspaceId 注入 toolInput，供 create_ppt 等工具写 DB 使用
+  const toolResult = await tool.execute({ ...toolInput, workspaceId }, connectorConfig)
+  return {
+    toolId,
+    toolName: tool.name,
+    success: toolResult.success,
+    message: toolResult.message,
+    data: toolResult.data ?? null,
   }
 }

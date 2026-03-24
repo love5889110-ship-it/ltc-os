@@ -11,6 +11,9 @@ export interface AISettings {
   llmApiKey?: string
   llmBaseUrl?: string
   llmModel?: string
+  // Get笔记自动同步
+  getNoteAutoSync?: boolean
+  getNoteAutoSyncInterval?: number  // 分钟，15 / 30 / 60
 }
 
 const DEFAULTS: AISettings = {
@@ -31,6 +34,8 @@ function parseSettingsMap(map: Record<string, string>): Partial<AISettings> {
   if (map.llmApiKey) out.llmApiKey = map.llmApiKey
   if (map.llmBaseUrl) out.llmBaseUrl = map.llmBaseUrl
   if (map.llmModel) out.llmModel = map.llmModel
+  if (map.getNoteAutoSync) out.getNoteAutoSync = map.getNoteAutoSync === 'true'
+  if (map.getNoteAutoSyncInterval) out.getNoteAutoSyncInterval = Number(map.getNoteAutoSyncInterval)
   return out
 }
 

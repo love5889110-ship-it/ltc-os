@@ -135,10 +135,18 @@ export default function SandboxPage() {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <PageGuide
-        role="管理层"
-        what="沙盘测试：在不影响真实数据的情况下，向数字员工提交模拟上下文，观察其输出，用于调试和调优 AI 行为"
-        firstStep="选择数字员工 → 修改上下文 JSON → 点击「运行沙盘测试」→ 查看决策和行动输出"
         storageKey="sandbox"
+        contents={{
+          manager: {
+            roleLabel: '管理层',
+            purpose: '不影响真实数据的 AI 行为调试台',
+            whenToUse: '修改规则后验证效果，或调试数字员工输出时',
+            aiAlreadyDid: '提供隔离的测试运行环境，不写入正式数据',
+            youDecide: '提交模拟上下文，观察 AI 决策输出是否符合预期',
+            nextStepLabel: '进化中心',
+            nextStepHref: '/evolution',
+          },
+        }}
       />
 
       <div className="flex items-center gap-3 mb-6">

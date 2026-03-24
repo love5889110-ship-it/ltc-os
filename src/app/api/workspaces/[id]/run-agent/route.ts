@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/db'
 import {
   opportunities, customers, signalEvents,
-  signalBindings, agentRuns, agentDecisions, stateSnapshots,
+  signalBindings, agentRuns, agentDecisions, stateSnapshots, channelPartners,
 } from '@/db/schema'
 import { runAgent, createOrGetThread } from '@/lib/agent-runtime'
 import { eq, desc } from 'drizzle-orm'
@@ -30,6 +30,9 @@ export async function POST(
   })
   const customer = opp
     ? await db.query.customers.findFirst({ where: eq(customers.id, opp.customerId) })
+    : null
+  const channelPartner = opp?.channelPartnerId
+    ? await db.query.channelPartners.findFirst({ where: eq(channelPartners.id, opp.channelPartnerId) })
     : null
 
   // ── P3: 增强上下文：最近10条归属信号 ──────────────────────────────────────
@@ -95,8 +98,24 @@ export async function POST(
         ? { id: opp.id, name: opp.name, stage: opp.stage, amount: opp.amount, status: opp.status }
         : undefined,
       customer: customer
-        ? { id: customer.id, name: customer.name, industry: customer.industry, region: customer.region }
+        ? {
+            id: customer.id,
+            name: customer.name,
+            industry: customer.industry,
+            region: customer.region,
+            profile: customer.profileJson,
+          }
         : undefined,
+      channelPartner: channelPartner
+        ? {
+            id: channelPartner.id,
+            name: channelPartner.name,
+            region: channelPartner.region,
+            profile: channelPartner.profileJson,
+          }
+        : opp?.channelPartner
+          ? { name: opp.channelPartner }
+          : undefined,
       currentStage: workspace.currentStage ?? undefined,
       healthScore: workspace.healthScore,
       riskScore: workspace.riskScore,

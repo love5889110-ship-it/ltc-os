@@ -4,21 +4,15 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
-  Inbox,
   Swords,
-  UserCheck,
-  Zap,
-  Plug,
   TrendingUp,
   LayoutDashboard,
   Bot,
   BookOpen,
-  ClipboardList,
-  FileEdit,
-  GitBranch,
   RefreshCw,
   ChevronDown,
-  FlaskConical,
+  Settings,
+  Wrench,
 } from 'lucide-react'
 import { useRole, ROLE_LABELS, type UserRole } from '@/hooks/useRole'
 
@@ -35,41 +29,36 @@ type NavGroup = {
   items: NavItem[]
 }
 
-// 导航分组结构，让用户清楚各菜单职责
 const NAV_GROUPS: NavGroup[] = [
   {
+    groupLabel: '主价值流',
     items: [
-      { href: '/inbox', label: 'AI 收件箱', icon: Inbox, primaryFor: ['sales'] },
-      { href: '/workspace', label: '商机作战台', icon: Swords, primaryFor: ['sales', 'solution'] },
-      { href: '/pipeline', label: '销售流水线', icon: GitBranch, primaryFor: ['manager', 'sales'] },
-      { href: '/assets', label: '资产库', icon: BookOpen, primaryFor: ['solution'] },
+      { href: '/workspace', label: '战场总览',   hint: '所有商机 × Agent 协作状态',  icon: Swords,         primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/dashboard', label: '运行驾驶舱', hint: '商机健康与系统运行概况',       icon: LayoutDashboard, primaryFor: ['sales', 'solution', 'manager'] },
     ],
   },
   {
-    groupLabel: 'AI 协作处理',
+    groupLabel: '能力建设',
     items: [
-      { href: '/intervention', label: '人工干预台', hint: '待我决策', icon: UserCheck, primaryFor: ['sales', 'solution'] },
-      { href: '/tasks', label: '任务中心', hint: '我的任务', icon: ClipboardList, primaryFor: ['sales', 'solution', 'manager'] },
-      { href: '/drafts', label: '草稿中心', hint: '待发内容', icon: FileEdit, primaryFor: ['sales'] },
-      { href: '/execution', label: '执行记录', hint: '执行历史', icon: Zap, primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/assets',    label: '知识资产', hint: '注入 AI 的方案、案例与话术',       icon: BookOpen,   primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/evolution', label: '进化中心', hint: 'AI 决策能力：规则训练与提炼',       icon: TrendingUp, primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/settings?tab=skills', label: '技能工坊', hint: 'AI 行动能力：工具调试与装载',       icon: Wrench,     primaryFor: ['sales', 'solution', 'manager'] },
     ],
   },
   {
-    groupLabel: '运营管理',
+    groupLabel: '系统配置',
     items: [
-      { href: '/dashboard', label: '运行驾驶舱', icon: LayoutDashboard, primaryFor: ['manager'] },
-      { href: '/connectors', label: '连接器中心', icon: Plug, primaryFor: ['manager'] },
-      { href: '/evolution', label: '进化中心', icon: TrendingUp, primaryFor: ['manager'] },
-      { href: '/sandbox', label: '沙盘测试', icon: FlaskConical, primaryFor: ['manager'] },
-      { href: '/flow', label: '系统运转图', icon: RefreshCw, primaryFor: ['manager'] },
+      { href: '/settings', label: '连接器与模型', hint: '数据接入与大模型配置', icon: Settings,  primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/flow',     label: '系统地图',     hint: '运转逻辑全貌与角色视角', icon: RefreshCw, primaryFor: ['sales', 'solution', 'manager'] },
     ],
   },
 ]
 
 const ROLE_OPTIONS: { value: UserRole; label: string; desc: string }[] = [
-  { value: 'sales', label: '销售', desc: '日常跟单、录入信息' },
-  { value: 'solution', label: '解方经理', desc: '方案设计、资产管理' },
-  { value: 'manager', label: '管理层', desc: '全局看板、规则治理' },
+  { value: null,       label: '全部',       desc: '显示所有菜单' },
+  { value: 'sales',    label: '销售/商务',  desc: '客户跟进、报价谈判、合同' },
+  { value: 'solution', label: '解决方案经理', desc: '方案设计、技术支持' },
+  { value: 'manager',  label: '管理层',     desc: '全局看板、规则治理' },
 ]
 
 export function Sidebar() {
@@ -112,17 +101,19 @@ export function Sidebar() {
                     <Link
                       key={href}
                       href={href}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         active
                           ? 'bg-blue-600 text-white'
                           : 'text-gray-300 hover:bg-gray-800 hover:text-gray-100'
                       }`}
                     >
                       <Icon className="w-4 h-4 flex-shrink-0" />
-                      <span className="flex-1 leading-tight">{label}</span>
-                      {hint && !active && (
-                        <span className="text-[10px] text-gray-500 leading-tight">{hint}</span>
-                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="leading-tight truncate">{label}</div>
+                        {hint && !active && (
+                          <div className="text-[10px] text-gray-500 leading-tight mt-0.5">{hint}</div>
+                        )}
+                      </div>
                     </Link>
                   )
                 })}
@@ -151,7 +142,7 @@ export function Sidebar() {
           <div className="mt-1 bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
             {ROLE_OPTIONS.map((opt) => (
               <button
-                key={opt.value}
+                key={String(opt.value)}
                 onClick={() => { setRole(opt.value); setShowRolePicker(false) }}
                 className={`w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-gray-700 transition-colors ${
                   role === opt.value ? 'bg-blue-900/40' : ''
