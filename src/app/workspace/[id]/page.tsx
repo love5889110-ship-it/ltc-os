@@ -16,28 +16,28 @@ const STAGES = ['需求挖掘', '方案设计', '招投标', '商务谈判', '�
 // 专项员工分组（按角色视角）
 const SPECIALIST_GROUPS = [
   {
-    role: '销售/商务',
+    role: '销售 Agent',
     icon: Briefcase,
     agents: ['sales'],
     color: 'text-blue-600',
     bg: 'bg-blue-50',
   },
   {
-    role: '解决方案',
+    role: '解决方案 Agent',
     icon: Package,
     agents: ['presales_assistant'],
     color: 'text-purple-600',
     bg: 'bg-purple-50',
   },
   {
-    role: '招标',
+    role: '招标 Agent',
     icon: FileText,
     agents: ['tender_assistant'],
     color: 'text-orange-600',
     bg: 'bg-orange-50',
   },
   {
-    role: '交付',
+    role: '交付 Agent',
     icon: HardHat,
     agents: ['handover'],
     color: 'text-green-600',
@@ -972,7 +972,7 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
                                       {run.reasoningSummary && (
                                         <div>
                                           <p className="text-[10px] font-medium text-gray-500 mb-1">📋 推理过程</p>
-                                          <p className="text-[11px] text-gray-600 bg-gray-50 rounded px-2.5 py-2 leading-relaxed">{run.reasoningSummary}</p>
+                                          <p className="text-[11px] text-gray-600 border-l-2 border-gray-300 pl-2.5 py-1 bg-gray-50/60 rounded-r leading-relaxed">{run.reasoningSummary}</p>
                                         </div>
                                       )}
                                       {/* B: 执行步骤 */}
@@ -983,11 +983,14 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
                                             {run.executionSteps.map((step, i) => (
                                               <div key={i} className="flex items-center gap-2">
                                                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${step.executionStatus === 'completed' ? 'bg-green-400' : 'bg-red-400'}`} />
-                                                <span className="text-[10px] text-gray-500 w-20 flex-shrink-0">{ACTION_TYPE_LABELS[step.executorType] ?? step.executorType}</span>
+                                                <span className="text-[10px] text-gray-600 font-medium flex-shrink-0">{ACTION_TYPE_LABELS[step.executorType] ?? step.executorType}</span>
+                                                {!!(step.responsePayloadJson as Record<string, unknown>)?.title && (
+                                                  <span className="text-[10px] text-gray-400 truncate">「{String((step.responsePayloadJson as Record<string, unknown>).title)}」</span>
+                                                )}
                                                 <span className={`text-[10px] flex-shrink-0 ${step.executionStatus === 'completed' ? 'text-green-600' : 'text-red-500'}`}>
-                                                  {step.executionStatus === 'completed' ? '✓ 完成' : '✗ 失败'}
+                                                  {step.executionStatus === 'completed' ? '✓' : '✗'}
                                                 </span>
-                                                {step.executedAt && <span className="text-[10px] text-gray-400 ml-auto">{formatRelativeTime(step.executedAt)}</span>}
+                                                {step.executedAt && <span className="text-[10px] text-gray-300 ml-auto flex-shrink-0">{formatRelativeTime(step.executedAt)}</span>}
                                               </div>
                                             ))}
                                           </div>

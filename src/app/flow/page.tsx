@@ -6,7 +6,8 @@ import {
   Play, Pause, SkipForward, SkipBack, ArrowRight, ArrowLeft,
   Shield, FileText, TrendingUp, ChevronDown, ChevronUp, Database,
   AlertTriangle, CheckCircle, Clock, Layers, ExternalLink, UserCircle,
-  FlaskConical, BarChart2, FileEdit, Inbox, Swords, ClipboardList
+  FlaskConical, BarChart2, FileEdit, Inbox, Swords, ClipboardList,
+  Wrench, Package, Star, Briefcase
 } from 'lucide-react'
 import { PageGuide } from '@/components/ui/page-guide'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
@@ -213,6 +214,7 @@ export default function FlowPage() {
     runningAgents: number
     pendingActions: number
     failedActions: number
+    skillCount: number
   } | null>(null)
   // Journey state
   const [journeyStep, setJourneyStep] = useState(0)
@@ -251,20 +253,24 @@ export default function FlowPage() {
     if (activeTab !== 'overview') return
     const fetchStatus = async () => {
       try {
-        const [signalsRes, workspacesRes] = await Promise.all([
+        const [signalsRes, workspacesRes, skillsRes] = await Promise.all([
           fetch('/api/signals?status=pending_confirm&limit=100'),
           fetch('/api/workspaces?limit=50'),
+          fetch('/api/skill-templates'),
         ])
         const signalsData = signalsRes.ok ? await signalsRes.json() : {}
         const wsData = workspacesRes.ok ? await workspacesRes.json() : {}
+        const skillsData = skillsRes.ok ? await skillsRes.json() : {}
         const workspaces = wsData.workspaces ?? []
         const runningAgents = workspaces.reduce((sum: number, w: any) => sum + (w.runningAgentCount ?? 0), 0)
         const pendingActions = workspaces.reduce((sum: number, w: any) => sum + (w.pendingActionCount ?? 0), 0)
+        const skillCount = (skillsData.templates ?? []).filter((t: any) => t.enabled).length
         setLiveStatus({
           pendingSignals: signalsData.total ?? 0,
           runningAgents,
           pendingActions,
           failedActions: 0,
+          skillCount,
         })
       } catch { /* ignore */ }
     }
@@ -468,6 +474,13 @@ export default function FlowPage() {
                   <span className="text-gray-400 text-xs">执行失败</span>
                 </div>
               )}
+              {liveStatus.skillCount > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-purple-400" />
+                  <span className="text-white font-medium">{liveStatus.skillCount}</span>
+                  <span className="text-gray-400 text-xs">个技能已上架</span>
+                </div>
+              )}
               <span className="text-gray-600 text-xs ml-auto">每30秒刷新</span>
             </div>
           )}
@@ -625,6 +638,41 @@ export default function FlowPage() {
               </div>
               <div className="text-xs text-gray-400 text-right max-w-[160px]">改写内容→反馈样本<br/>驳回+说明→规则原材料</div>
             </div>
+          </div>
+
+          {/* 技能工坊层（第2.5层，插在AI协作核心与进化闭环之间） */}
+          <div className="bg-white rounded-xl border p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Wrench className="w-4 h-4 text-purple-500" />
+              <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">技能工坊</span>
+              <span className="text-xs text-gray-400">自训练行动技能，构建数字员工的能力边界</span>
+              <Link href="/settings?tab=skills" className="ml-auto text-[10px] text-purple-400 hover:text-purple-600 flex items-center gap-0.5">
+                进入技能工坊 <ExternalLink className="w-3 h-3" />
+              </Link>
+            </div>
+            <div className="flex items-center gap-2">
+              {[
+                { label: '沙盘训练', sublabel: '对话驱动构建', icon: FlaskConical, desc: '用自然语言描述需求，AI 自动构建技能规格和执行配置' },
+                { label: '调试测试', sublabel: '真实执行验证', icon: Zap, desc: '用真实参数测试技能，查看 HTTP 响应或工具调用结果' },
+                { label: '封装上架', sublabel: '技能入库', icon: Package, desc: '测试通过后一键封装为标准技能，进入技能库' },
+                { label: '装载 Agent', sublabel: '分配给数字员工', icon: Bot, desc: '从技能库选择并分配给指定 Agent 角色，立即生效' },
+              ].map((node, i) => (
+                <div key={node.label} className="flex items-start flex-1 min-w-0">
+                  <Link
+                    href="/settings?tab=skills"
+                    className="flex-1 flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-purple-200 bg-purple-50 hover:bg-purple-100 transition-colors text-center"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center">
+                      <node.icon className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-medium text-purple-700">{node.label}</span>
+                    <span className="text-[10px] text-purple-400">{node.sublabel}</span>
+                  </Link>
+                  {i < 3 && <ArrowRight className="w-3 h-3 text-purple-300 flex-shrink-0 mt-4 mx-0.5" />}
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2.5">支持：HTTP API 调用 / 导入 OpenAI Function Calling 格式 / 引用内置工具 — 训练好的技能可装载给任意数字员工</p>
           </div>
 
           {/* 第三层：进化闭环 */}
