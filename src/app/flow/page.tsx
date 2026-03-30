@@ -229,6 +229,9 @@ export default function FlowPage() {
             </div>
           )}
           <span className="text-slate-700 text-xs">每30秒刷新</span>
+          <Link href="/dashboard" className="ml-auto flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1 rounded-lg transition-colors">
+            进入总控台 →
+          </Link>
         </div>
 
         {/* 执行日志 ticker */}

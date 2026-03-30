@@ -18,6 +18,7 @@ import {
   notifications,
   connectorInstances,
   agentSkills,
+  skillTemplates,
 } from '@/db/schema'
 import { generateId } from '@/lib/utils'
 import { eq, desc, and } from 'drizzle-orm'
@@ -400,6 +401,44 @@ async function executeCreateCollab(
 
 // ── call_tool 执行器 ──────────────────────────────────────────────────────────
 
+async function executeSkillTemplate(
+  template: { id: string; name: string; executionConfigJson: unknown },
+  toolInput: Record<string, unknown>
+): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
+  const execConfig = (template.executionConfigJson ?? {}) as Record<string, unknown>
+  const execType = (execConfig.type as string) ?? 'stub'
+
+  if (execType === 'http') {
+    const apiUrl = execConfig.apiUrl as string
+    if (!apiUrl) return { success: false, message: '技能缺少 apiUrl 配置' }
+    const method = ((execConfig.httpMethod as string) ?? 'POST').toUpperCase()
+    const headers = (execConfig.headers as Record<string, string>) ?? {}
+    const res = await fetch(
+      method === 'GET' ? `${apiUrl}?${new URLSearchParams(toolInput as Record<string, string>)}` : apiUrl,
+      {
+        method,
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: method !== 'GET' ? JSON.stringify(toolInput) : undefined,
+      }
+    )
+    const text = await res.text()
+    let data: Record<string, unknown> = {}
+    try { data = JSON.parse(text) } catch { data = { raw: text.slice(0, 500) } }
+    return { success: res.ok, message: `HTTP ${res.status} ${res.statusText}`, data }
+  }
+
+  if (execType === 'builtin') {
+    const builtinToolId = execConfig.toolId as string
+    const builtinTool = getToolById(builtinToolId)
+    if (!builtinTool) return { success: false, message: `内置工具 ${builtinToolId} 不存在` }
+    const result = await builtinTool.execute(toolInput)
+    return result
+  }
+
+  // stub — 沙盘占位，不真实执行
+  return { success: true, message: `[stub] 技能 ${template.name} 已模拟执行`, data: toolInput }
+}
+
 async function executeCallTool(
   workspaceId: string,
   payload: Record<string, unknown>,
@@ -410,8 +449,15 @@ async function executeCallTool(
 
   if (!toolId) throw new Error('call_tool 动作缺少 toolId 参数')
 
+  // 先查内置工具，找不到则查 skillTemplates
   const tool = getToolById(toolId)
-  if (!tool) throw new Error(`工具 "${toolId}" 不存在，请检查 tool-registry.ts`)
+  const skillTemplate = !tool
+    ? await db.query.skillTemplates.findFirst({ where: eq(skillTemplates.id, toolId) })
+    : null
+
+  if (!tool && !skillTemplate) {
+    throw new Error(`工具 "${toolId}" 不存在，请检查 tool-registry 或技能库`)
+  }
 
   // ACL：检查 Agent 是否已装载此工具
   if (runId) {
@@ -431,37 +477,48 @@ async function executeCallTool(
           ),
         })
         if (!skill) {
+          const toolName = tool?.name ?? skillTemplate?.name ?? toolId
           return {
             success: false,
-            message: `Agent「${thread.agentType}」未装载工具「${tool.name}」，请在技能工坊中装载后重试`,
+            message: `Agent「${thread.agentType}」未装载工具「${toolName}」，请在技能工坊中装载后重试`,
           }
         }
       }
     }
   }
 
-  // 若工具需要连接器，查询授权配置
-  let connectorConfig: Record<string, unknown> | undefined
-  if (tool.requiresConnector) {
-    const connector = await db.query.connectorInstances.findFirst({
-      where: (c, { and, eq }) => and(
-        eq(c.connectorType, tool.requiresConnector as any),
-        eq(c.enabled, true)
-      ),
-    })
-    if (!connector) {
-      return { success: false, message: `工具「${tool.name}」需要先在「连接器与模型」中完成 ${tool.requiresConnector} 授权` }
+  // 内置工具：查 connector 授权后执行
+  if (tool) {
+    let connectorConfig: Record<string, unknown> | undefined
+    if (tool.requiresConnector) {
+      const connector = await db.query.connectorInstances.findFirst({
+        where: (c, { and, eq }) => and(
+          eq(c.connectorType, tool.requiresConnector as any),
+          eq(c.enabled, true)
+        ),
+      })
+      if (!connector) {
+        return { success: false, message: `工具「${tool.name}」需要先在「连接器与模型」中完成 ${tool.requiresConnector} 授权` }
+      }
+      connectorConfig = (connector.configJson as Record<string, unknown>) ?? undefined
     }
-    connectorConfig = (connector.configJson as Record<string, unknown>) ?? undefined
+    const toolResult = await tool.execute({ ...toolInput, workspaceId }, connectorConfig)
+    return {
+      toolId,
+      toolName: tool.name,
+      success: toolResult.success,
+      message: toolResult.message,
+      data: toolResult.data ?? null,
+    }
   }
 
-  // 将 workspaceId 注入 toolInput，供 create_ppt 等工具写 DB 使用
-  const toolResult = await tool.execute({ ...toolInput, workspaceId }, connectorConfig)
+  // 自训练技能：按 executionConfigJson 执行
+  const templateResult = await executeSkillTemplate(skillTemplate!, { ...toolInput, workspaceId })
   return {
     toolId,
-    toolName: tool.name,
-    success: toolResult.success,
-    message: toolResult.message,
-    data: toolResult.data ?? null,
+    toolName: skillTemplate!.name,
+    success: templateResult.success,
+    message: templateResult.message,
+    data: templateResult.data ?? null,
   }
 }

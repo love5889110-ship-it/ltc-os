@@ -196,7 +196,7 @@ export default function AssetsPage() {
                 whenToUse: '上传新方案/案例时，或检查 AI 是否已使用最新素材时',
                 aiAlreadyDid: '在分析商机时自动调用匹配的素材注入决策上下文',
                 youDecide: '上传新内容、标注质量、停用过时素材',
-                nextStepLabel: '查看战场总览',
+                nextStepLabel: '查看商机作战空间',
                 nextStepHref: '/workspace',
               },
               all: {

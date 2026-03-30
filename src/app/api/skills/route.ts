@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/db'
 import { agentSkills } from '@/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { generateId } from '@/lib/utils'
 import { TOOLS } from '@/lib/tool-registry'
 
@@ -9,13 +9,31 @@ export async function GET() {
   const skills = await db.query.agentSkills.findMany({
     orderBy: (s, { asc }) => [asc(s.agentType), asc(s.toolId)],
   })
-  return NextResponse.json({ skills, tools: TOOLS.map(t => ({
+
+  // 补充 skillTemplate 元数据（自训练技能）
+  const templates = await db.query.skillTemplates.findMany({
+    where: (t, { eq }) => eq(t.enabled, true),
+  })
+  const templateMap = Object.fromEntries(templates.map(t => [t.id, t]))
+
+  const skillsWithMeta = skills.map(s => ({
+    ...s,
+    _templateMeta: s.skillTemplateId ? templateMap[s.skillTemplateId] ?? null : null,
+  }))
+
+  return NextResponse.json({ skills: skillsWithMeta, tools: TOOLS.map(t => ({
     id: t.id,
     name: t.name,
     category: t.category,
     description: t.description,
     requiresConnector: t.requiresConnector,
     testable: t.testable,
+  })), skillTemplates: templates.map(t => ({
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    category: t.category,
+    toolSource: t.toolSource,
   })) })
 }
 
@@ -27,9 +45,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '缺少 agentType 或 toolId' }, { status: 400 })
   }
 
-  const tool = TOOLS.find(t => t.id === toolId)
-  if (!tool) {
-    return NextResponse.json({ error: `工具 ${toolId} 不存在` }, { status: 400 })
+  // 先查内置工具，再查 skillTemplates
+  const builtinTool = TOOLS.find(t => t.id === toolId)
+  let skillTemplateId: string | null = null
+
+  if (!builtinTool) {
+    const template = await db.query.skillTemplates.findFirst({
+      where: (t, { eq }) => eq(t.id, toolId),
+    })
+    if (!template) {
+      return NextResponse.json({ error: `工具 ${toolId} 不存在（非内置工具，也未在技能库中找到）` }, { status: 400 })
+    }
+    skillTemplateId = template.id
   }
 
   // Upsert: if same agentType+toolId already exists, re-enable it
@@ -49,6 +76,7 @@ export async function POST(req: NextRequest) {
     id: skillId,
     agentType,
     toolId,
+    skillTemplateId,
     enabled: true,
     config: config ?? null,
   })

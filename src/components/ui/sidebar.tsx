@@ -5,14 +5,12 @@ import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
   Swords,
-  TrendingUp,
   LayoutDashboard,
   Bot,
   BookOpen,
-  RefreshCw,
   ChevronDown,
   Settings,
-  Wrench,
+  Cpu,
 } from 'lucide-react'
 import { useRole, ROLE_LABELS, type UserRole } from '@/hooks/useRole'
 
@@ -33,23 +31,26 @@ const NAV_GROUPS: NavGroup[] = [
   {
     groupLabel: '主价值流',
     items: [
-      { href: '/workspace', label: '战场总览',   hint: '所有商机 × Agent 协作状态',  icon: Swords,         primaryFor: ['sales', 'solution', 'manager'] },
-      { href: '/dashboard', label: '运行驾驶舱', hint: '商机健康与系统运行概况',       icon: LayoutDashboard, primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/workspace', label: '商机作战空间',   hint: '各商机 Agent 协作 · 实时推进',  icon: Swords,         primaryFor: ['sales', 'solution', 'manager'] },
     ],
   },
   {
-    groupLabel: '能力建设',
+    groupLabel: '赋能区',
     items: [
-      { href: '/assets',    label: '知识资产', hint: '注入 AI 的方案、案例与话术',       icon: BookOpen,   primaryFor: ['sales', 'solution', 'manager'] },
-      { href: '/evolution', label: '进化中心', hint: 'AI 决策能力：规则训练与提炼',       icon: TrendingUp, primaryFor: ['sales', 'solution', 'manager'] },
-      { href: '/settings?tab=skills', label: '技能工坊', hint: 'AI 行动能力：工具调试与装载',       icon: Wrench,     primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/assets',    label: '知识资产',      hint: '注入 AI 的方案、案例与话术',  icon: BookOpen, primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/evolution', label: 'Agent 能力中心', hint: '决策能力 · 行动能力',         icon: Cpu,      primaryFor: ['sales', 'solution', 'manager'] },
+    ],
+  },
+  {
+    groupLabel: '管理',
+    items: [
+      { href: '/dashboard', label: '经营概览', hint: '商机健康 · AI效率 · 赢单趋势', icon: LayoutDashboard, primaryFor: ['manager'] },
     ],
   },
   {
     groupLabel: '系统配置',
     items: [
-      { href: '/settings', label: '连接器与模型', hint: '数据接入与大模型配置', icon: Settings,  primaryFor: ['sales', 'solution', 'manager'] },
-      { href: '/flow',     label: '系统地图',     hint: '运转逻辑全貌与角色视角', icon: RefreshCw, primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/settings', label: '连接器与模型', hint: '数据接入与大模型配置', icon: Settings, primaryFor: ['sales', 'solution', 'manager'] },
     ],
   },
 ]
@@ -73,8 +74,8 @@ export function Sidebar() {
         <div className="flex items-center gap-2">
           <Bot className="w-6 h-6 text-blue-400" />
           <span className="font-semibold text-sm leading-tight">
-            云艺化AI原生LTC<br />
-            <span className="text-gray-400 font-normal text-xs">人机协作系统</span>
+            AI原生经营系统<br />
+            <span className="text-gray-400 font-normal text-xs">云艺化 · LTC全流程</span>
           </span>
         </div>
       </div>

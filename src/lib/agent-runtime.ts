@@ -355,13 +355,27 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
   let skillsBlock = ''
   if (enabledSkills.length > 0) {
     const { TOOLS } = await import('@/lib/tool-registry')
-    const skillLines = enabledSkills.map(s => {
+    const { skillTemplates } = await import('@/db/schema')
+    const { eq } = await import('drizzle-orm')
+
+    const skillLines = await Promise.all(enabledSkills.map(async (s) => {
+      // 先查内置工具
       const def = TOOLS.find(t => t.id === s.toolId)
-      if (!def) return null
-      return `- 工具 ID: ${def.id}（${def.name}）：${def.description}`
-    }).filter(Boolean)
-    if (skillLines.length > 0) {
-      skillsBlock = `\n\n## 你可以调用的工具技能\n当需要真实执行时，生成 actionType="call_tool" 的动作，payload 包含 toolId 和 toolInput 字段。\n${skillLines.join('\n')}`
+      if (def) return `- 工具 ID: ${def.id}（${def.name}）：${def.description}`
+
+      // 再查 skillTemplates（自训练技能）
+      const templateId = s.skillTemplateId ?? s.toolId
+      const template = await db.query.skillTemplates.findFirst({
+        where: eq(skillTemplates.id, templateId),
+      })
+      if (template) return `- 工具 ID: ${template.id}（${template.name}）：${template.description}`
+
+      return null
+    }))
+
+    const validLines = skillLines.filter(Boolean)
+    if (validLines.length > 0) {
+      skillsBlock = `\n\n## 你可以调用的工具技能\n当需要真实执行时，生成 actionType="call_tool" 的动作，payload 包含 toolId 和 toolInput 字段。\n${validLines.join('\n')}`
     }
   }
 

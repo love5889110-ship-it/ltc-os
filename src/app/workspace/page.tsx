@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   Swords, Plus, TrendingUp, AlertTriangle, Clock, Zap, RefreshCw,
-  Building2, ChevronDown, LayoutGrid, GitBranch, Radio, Upload, Edit3,
+  LayoutGrid, GitBranch, Radio,
 } from 'lucide-react'
 import { healthScoreColor, formatRelativeTime } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
@@ -85,12 +85,8 @@ function WorkspacePageInner() {
   const [pipelineSort, setPipelineSort] = useState<'risk' | 'health' | 'amount'>('risk')
 
   // 信号输入 + 全局待处理
-  const [signalCounts, setSignalCounts] = useState<{ total: number; unbound: number }>({ total: 0, unbound: 0 })
   const [pendingTotal, setPendingTotal] = useState(0)
   const [pendingByWorkspace, setPendingByWorkspace] = useState<{ name: string; count: number; id: string }[]>([])
-  const [showManualSignal, setShowManualSignal] = useState(false)
-  const [manualContent, setManualContent] = useState('')
-  const [submittingSignal, setSubmittingSignal] = useState(false)
 
   useEffect(() => {
     fetch('/api/workspaces')
@@ -109,10 +105,6 @@ function WorkspacePageInner() {
           .slice(0, 5)
         setPendingByWorkspace(byWs)
       })
-    fetch('/api/signals?limit=0')
-      .then(r => r.json())
-      .then(d => setSignalCounts({ total: d.total ?? 0, unbound: d.unboundCount ?? 0 }))
-      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -178,32 +170,18 @@ function WorkspacePageInner() {
     return idx >= 0 ? idx : -1
   }
 
-  const handleManualSignal = async () => {
-    if (!manualContent.trim()) return
-    setSubmittingSignal(true)
-    await fetch('/api/signals', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rawContent: manualContent.trim(), sourceType: 'manual' }),
-    })
-    setSubmittingSignal(false)
-    setManualContent('')
-    setShowManualSignal(false)
-    setSignalCounts(prev => ({ total: prev.total + 1, unbound: prev.unbound + 1 }))
-  }
-
   return (
     <div className={`flex flex-col ${view === 'pipeline' ? 'h-full' : ''}`}>
       {/* Page header */}
       <div className="bg-white border-b px-6 py-4 flex-shrink-0">
-        <Breadcrumb items={[{ label: '主价值流' }, { label: '战场总览' }]} />
+        <Breadcrumb items={[{ label: '主价值流' }, { label: '商机作战空间' }]} />
         <PageGuide
           storageKey="workspace"
           contents={{
             sales: {
               roleLabel: '销售',
               purpose: '所有商机与 AI 数字员工协作的全局视图',
-              whenToUse: '每天开始工作时，或录入信号后查看哪个战场需要你的决策',
+              whenToUse: '每天开始工作时，或在此录入信号后查看哪个战场需要你的决策',
               aiAlreadyDid: '已为每个商机评估健康分/风险分，自动安排 Agent，生成待审批动作',
               youDecide: '进入有待审批动作的战场，在「待你决策」Tab 快速批准 AI 建议',
               nextStepLabel: '进入战场处理决策',
@@ -220,7 +198,7 @@ function WorkspacePageInner() {
             },
             manager: {
               roleLabel: '管理层',
-              purpose: '全局商机健康状态总览',
+              purpose: '智能体协同执行的商机推进主阵地',
               whenToUse: '每周例会前或看到风险告警时来这里',
               aiAlreadyDid: '已为所有商机评分，标记高风险战场，统计积压动作数',
               youDecide: '关注风险分高的战场，决定是否介入或调整资源',
@@ -229,63 +207,6 @@ function WorkspacePageInner() {
             },
           }}
         />
-
-        {/* 信号输入栏 */}
-        <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-medium text-gray-600 flex items-center gap-1">
-                <Radio className="w-3.5 h-3.5 text-blue-500" />
-                信号输入
-              </span>
-              <button
-                onClick={() => window.location.href = '/inbox?action=sync'}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-600 hover:bg-blue-50 hover:border-blue-300 transition-colors"
-              >
-                <RefreshCw className="w-3 h-3" />同步笔记
-              </button>
-              <button
-                onClick={() => window.location.href = '/inbox?action=upload'}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-white border rounded-lg text-xs text-gray-600 hover:bg-blue-50 hover:border-blue-300 transition-colors"
-              >
-                <Upload className="w-3 h-3" />上传文件
-              </button>
-              <button
-                onClick={() => setShowManualSignal(v => !v)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 border rounded-lg text-xs transition-colors ${showManualSignal ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 hover:bg-blue-50 hover:border-blue-300'}`}
-              >
-                <Edit3 className="w-3 h-3" />手动录入
-              </button>
-            </div>
-            {signalCounts.unbound > 0 && (
-              <a href="/inbox" className="text-xs text-orange-600 hover:text-orange-700 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
-                {signalCounts.unbound} 条待归属 →
-              </a>
-            )}
-          </div>
-          {showManualSignal && (
-            <div className="mt-2.5 flex gap-2">
-              <textarea
-                value={manualContent}
-                onChange={e => setManualContent(e.target.value)}
-                placeholder="输入客户沟通记录、会议纪要、邮件内容等…AI 自动解析归类"
-                rows={2}
-                className="flex-1 text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              />
-              <div className="flex flex-col gap-1.5">
-                <button
-                  onClick={handleManualSignal}
-                  disabled={submittingSignal || !manualContent.trim()}
-                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {submittingSignal ? '录入中…' : '录入'}
-                </button>
-                <button onClick={() => setShowManualSignal(false)} className="px-3 py-1.5 border rounded-lg text-xs text-gray-500">取消</button>
-              </div>
-            </div>
-          )}
-        </div>
 
         {/* 全局待处理汇总 */}
         {pendingTotal > 0 && (
@@ -311,11 +232,18 @@ function WorkspacePageInner() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Swords className="w-5 h-5 text-blue-600" />
-            <h1 className="text-lg font-semibold">战场总览</h1>
+            <h1 className="text-lg font-semibold">商机作战空间</h1>
             <span className="text-sm text-gray-500">{workspaces.length} 个商机</span>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* 录入信号 */}
+            <Link
+              href="/inbox"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+            >
+              <Radio className="w-4 h-4" />录入信号
+            </Link>
             {/* 视图切换 */}
             <div className="flex border rounded-lg overflow-hidden text-xs">
               <button
@@ -411,8 +339,8 @@ function WorkspacePageInner() {
                     className="relative bg-white rounded-xl border hover:shadow-md transition-shadow p-5 block"
                   >
                     {pendingActionCount > 0 && (
-                      <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold z-10">
-                        {pendingActionCount}
+                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-tight z-10 whitespace-nowrap">
+                        {pendingActionCount} 待审
                       </span>
                     )}
 
@@ -433,9 +361,12 @@ function WorkspacePageInner() {
                           )}
                         </p>
                       </div>
-                      <span className={`text-xl font-bold ml-2 flex-shrink-0 ${healthScoreColor(workspace.healthScore ?? 0)}`}>
-                        {Math.round(workspace.healthScore ?? 0)}
-                      </span>
+                      <div className="flex flex-col items-end ml-2 flex-shrink-0">
+                        <span className={`text-xl font-bold ${healthScoreColor(workspace.healthScore ?? 0)}`}>
+                          {Math.round(workspace.healthScore ?? 0)}
+                        </span>
+                        <span className="text-[10px] text-gray-400 leading-tight">健康分</span>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 mb-3">
