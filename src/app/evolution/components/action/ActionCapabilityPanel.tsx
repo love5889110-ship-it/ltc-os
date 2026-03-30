@@ -4,8 +4,7 @@ import { useState } from 'react'
 import {
   ArrowRight, CheckCircle, Play, BarChart2, Link2,
   FileText, BookOpen, Sparkles, Zap, Settings,
-  Bell, ChevronLeft, Send, XCircle, AlertCircle,
-  PackageCheck,
+  Bell, ChevronLeft,
 } from 'lucide-react'
 import type {
   ActionSkill,
@@ -16,10 +15,10 @@ import type {
   AgentCapabilityPageState,
   SkillRecommendation,
   SkillLoadCandidate,
+  CandidateStatus,
 } from '../../types'
 import {
   SKILL_STATUS_LABELS, SKILL_STATUS_TRANSITIONS,
-  RECOMMENDATION_STATUS_LABELS, CANDIDATE_STATUS_LABELS,
 } from '../../types'
 import {
   updateActionSkillStatus,
@@ -36,6 +35,8 @@ import { ActionSkillTestCasePanel } from './ActionSkillTestCasePanel'
 import { ActionSkillEvaluationPanel } from './ActionSkillEvaluationPanel'
 import { ActionSkillBindingPanel } from './ActionSkillBindingPanel'
 import { ActionSkillExecutionLogPanel } from './ActionSkillExecutionLogPanel'
+import { SkillRecommendationCenter } from './SkillRecommendationCenter'
+import { SkillLoadTestingZone } from './SkillLoadTestingZone'
 
 type ViewMode = 'list' | 'training' | 'import' | 'recommend'
 type ActionSubTab = 'test' | 'binding' | 'adapter' | 'cases' | 'evaluation' | 'logs'
@@ -209,11 +210,10 @@ export function ActionCapabilityPanel({ state, highlightIds, onStateUpdate, onAd
     )
   }
 
-  // 推荐中心：全屏展示推荐列表 + 装载候选队列
+  // 推荐中心：完整版（筛选+详情抽屉+装载候选流程）
   if (viewMode === 'recommend') {
     return (
       <div className="space-y-4">
-        {/* 顶部返回 */}
         <button
           onClick={() => setViewMode('list')}
           className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-300 transition-colors"
@@ -222,145 +222,36 @@ export function ActionCapabilityPanel({ state, highlightIds, onStateUpdate, onAd
           返回技能库
         </button>
 
-        {/* 推荐列表 */}
-        <div className="bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/60">
-            <div className="flex items-center gap-2">
-              <Bell className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-xs font-semibold text-slate-300">技能推荐</span>
-              {pendingRecs.length > 0 && (
-                <span className="text-[9px] bg-amber-900/40 text-amber-400 border border-amber-700/40 px-1.5 py-0.5 rounded-full">
-                  {pendingRecs.length} 条待处理
-                </span>
-              )}
-            </div>
-            <p className="text-[9px] text-slate-600">预置技能库和内置工具中尚未分配给 Agent 的技能</p>
-          </div>
+        <SkillRecommendationCenter
+          recommendations={state.skillRecommendations}
+          sendingRecId={sendingRecId}
+          onSendToTesting={handleSendToTesting}
+          onDismiss={handleDismissRec}
+        />
 
-          {state.skillRecommendations.length === 0 ? (
-            <div className="flex items-center justify-center py-10 text-slate-600 text-xs">
-              暂无推荐
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-800/60">
-              {state.skillRecommendations.map((rec) => (
-                <div key={rec.id} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-800/20 transition-colors">
-                  <div className={`mt-0.5 flex-shrink-0 w-1.5 h-1.5 rounded-full ${
-                    rec.status === 'recommended' ? 'bg-amber-400' :
-                    rec.status === 'sent_to_testing' ? 'bg-blue-400' :
-                    'bg-slate-600'
-                  }`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                      <span className="text-xs text-slate-200 font-medium">{rec.title}</span>
-                      <span className="text-[9px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded">
-                        {RECOMMENDATION_STATUS_LABELS[rec.status]}
-                      </span>
-                      {rec.riskLevel !== 'low' && (
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded ${
-                          rec.riskLevel === 'high' ? 'bg-red-900/30 text-red-400' : 'bg-yellow-900/30 text-yellow-400'
-                        }`}>
-                          {rec.riskLevel === 'high' ? '高风险' : '中风险'}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[10px] text-slate-500 line-clamp-1">{rec.description}</p>
-                    <p className="text-[9px] text-slate-600 mt-0.5">{rec.recommendationReason}</p>
-                  </div>
-                  {rec.status === 'recommended' && (
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <button
-                        onClick={() => handleSendToTesting(rec)}
-                        disabled={sendingRecId === rec.id}
-                        className="flex items-center gap-1 text-[9px] bg-indigo-600/80 hover:bg-indigo-500 text-white px-2 py-1 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        <Send className="w-2.5 h-2.5" />
-                        {sendingRecId === rec.id ? '送入中…' : '送入装载'}
-                      </button>
-                      <button
-                        onClick={() => handleDismissRec(rec.id)}
-                        className="text-[9px] text-slate-600 hover:text-slate-400 transition-colors"
-                      >
-                        忽略
-                      </button>
-                    </div>
-                  )}
-                  {rec.status === 'sent_to_testing' && (
-                    <span className="text-[9px] text-blue-400 flex-shrink-0 flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3" />已送入
-                    </span>
-                  )}
-                  {rec.status === 'dismissed' && (
-                    <span className="text-[9px] text-slate-600 flex-shrink-0">已忽略</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 装载候选队列 */}
         {state.skillLoadCandidates.length > 0 && (
-          <div className="bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800 bg-slate-900/60">
-              <PackageCheck className="w-3.5 h-3.5 text-blue-400" />
-              <span className="text-xs font-semibold text-slate-300">装载候选队列</span>
-              <span className="text-[9px] text-slate-600">{state.skillLoadCandidates.length} 条待处理</span>
-            </div>
-            <div className="divide-y divide-slate-800/60">
-              {state.skillLoadCandidates.map((cand) => (
-                <div key={cand.id} className="flex items-start gap-3 px-4 py-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                      <span className="text-xs text-slate-200 font-medium">{cand.rawName}</span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded border ${
-                        cand.status === 'callable' ? 'bg-green-900/30 text-green-400 border-green-700/40' :
-                        cand.status === 'rejected' ? 'bg-red-900/30 text-red-400 border-red-700/40' :
-                        'bg-slate-800 text-slate-500 border-slate-700'
-                      }`}>
-                        {CANDIDATE_STATUS_LABELS[cand.status]}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 line-clamp-1">{cand.description}</p>
-                    {(cand.needsSchemaNormalization || cand.needsPermissionReview || cand.needsReviewGate) && (
-                      <div className="flex items-center gap-1 mt-1 flex-wrap">
-                        <AlertCircle className="w-2.5 h-2.5 text-yellow-500" />
-                        {cand.needsSchemaNormalization && (
-                          <span className="text-[9px] text-yellow-500">需 Schema 归一化</span>
-                        )}
-                        {cand.needsPermissionReview && (
-                          <span className="text-[9px] text-yellow-500">需权限审查</span>
-                        )}
-                        {cand.needsReviewGate && (
-                          <span className="text-[9px] text-yellow-500">需审核门</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {cand.status === 'pending_adaptation' && (
-                    <button
-                      onClick={() => handlePublishCandidate(cand)}
-                      disabled={publishingCandId === cand.id}
-                      className="flex-shrink-0 flex items-center gap-1 text-[9px] bg-green-700/80 hover:bg-green-600 text-white px-2 py-1 rounded-lg transition-colors disabled:opacity-50"
-                    >
-                      <PackageCheck className="w-2.5 h-2.5" />
-                      {publishingCandId === cand.id ? '发布中…' : '发布上线'}
-                    </button>
-                  )}
-                  {cand.status === 'callable' && (
-                    <span className="text-[9px] text-green-400 flex-shrink-0 flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3" />已上线
-                    </span>
-                  )}
-                  {cand.status === 'rejected' && (
-                    <span className="text-[9px] text-red-400 flex-shrink-0 flex items-center gap-1">
-                      <XCircle className="w-3 h-3" />已拒绝
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+          <SkillLoadTestingZone
+            candidates={state.skillLoadCandidates}
+            adapters={state.skillAdapters}
+            onAdapterSaved={handleAdapterSaved}
+            onPublishCandidate={handlePublishCandidate}
+            onRejectCandidate={(candId) => {
+              onStateUpdate({
+                skillLoadCandidates: state.skillLoadCandidates.map((c) =>
+                  c.id === candId ? { ...c, status: 'rejected' as const } : c
+                ),
+              })
+            }}
+            onCandidateStatusUpdate={(candId, status) => {
+              onStateUpdate({
+                skillLoadCandidates: state.skillLoadCandidates.map((c) =>
+                  c.id === candId ? { ...c, status } : c
+                ),
+              })
+            }}
+            publishingCandId={publishingCandId}
+            onAddToFeedback={onAddToFeedback}
+          />
         )}
       </div>
     )

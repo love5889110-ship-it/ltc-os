@@ -1084,3 +1084,31 @@ export async function publishCandidateAsCallable(
   }
   return skill
 }
+
+// ─── 候选适配工具 ────────────────────────────────────────────────────────────
+
+/**
+ * 将装载候选转换为临时 ActionSkill，供 ActionSkillAdapterPanel/TestPanel 等复用。
+ * 关键约定：
+ * - skill.id = candidate.id（适配器/日志都以 candidateId 为 key，自动匹配）
+ * - skill.sandboxId = candidate.skillId（若有关联沙盘，用于真实执行）
+ * - skill.status 固定 'draft'（不触发面板内状态流转按钮）
+ */
+export function candidateToSkill(candidate: SkillLoadCandidate): ActionSkill {
+  return {
+    id: candidate.id,
+    name: candidate.rawName,
+    description: candidate.description ?? '',
+    sourceType: candidate.sourceType,
+    sourceName: candidate.sourceName,
+    type: 'data',
+    status: 'draft',
+    sandboxId: candidate.skillId,
+    inputSchema: candidate.rawInputSchema ?? {},
+    outputSchema: candidate.rawOutputSchema ?? {},
+    applicableTaskTypes: candidate.targetTaskTypes,
+    requiresHumanReview: candidate.needsReviewGate,
+    successRate: 0,
+    updatedAt: candidate.createdAt,
+  }
+}
