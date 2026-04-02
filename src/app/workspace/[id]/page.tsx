@@ -8,6 +8,7 @@ import {
   ChevronRight, ChevronDown, Zap, FileText, Radio, GitBranch,
   Trophy, XCircle, X, Users, Briefcase, HardHat, Package,
   Sparkles, Building2, Handshake, Edit2, MoreHorizontal, Plus,
+  ShieldAlert, PackageOpen, MessageSquarePlus, Send,
 } from 'lucide-react'
 import { AGENT_LABELS, ACTION_TYPE_LABELS, SIGNAL_SOURCE_LABELS, formatRelativeTime, healthScoreColor } from '@/lib/utils'
 
@@ -111,6 +112,34 @@ interface WorkspaceDetail {
   }>
 }
 
+interface Deliverable {
+  id: string
+  type: string
+  title: string
+  status: string
+  approvalStatus: string | null
+  version: number
+  stage: string | null
+  audience: string | null
+  content: string | null
+  fileUrl: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+interface RiskEvent {
+  id: string
+  riskCategory: string
+  riskLevel: string
+  title: string
+  description: string | null
+  status: string
+  recommendedAction: string | null
+  acknowledgedBy: string | null
+  createdAt: string | null
+}
+
 interface Toast {
   id: string
   message: string
@@ -174,8 +203,8 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
   const searchParams = useSearchParams()
   const [data, setData] = useState<WorkspaceDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'agents' | 'decisions' | 'outputs' | 'signals'>(
-    (searchParams.get('tab') as 'agents' | 'decisions' | 'outputs' | 'signals') ?? 'agents'
+  const [activeTab, setActiveTab] = useState<'situation' | 'agents' | 'decisions' | 'outputs' | 'deliverables' | 'signals'>(
+    (searchParams.get('tab') as 'situation' | 'agents' | 'decisions' | 'outputs' | 'deliverables' | 'signals') ?? 'situation'
   )
   const [runningAgent, setRunningAgent] = useState<string | null>(null)
   const [approvingId, setApprovingId] = useState<string | null>(null)
@@ -203,6 +232,21 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
   const [expandedRunDetail, setExpandedRunDetail] = useState<string | null>(null)
   const [executionExpanded, setExecutionExpanded] = useState(false)
   const [bulkApproving, setBulkApproving] = useState(false)
+  // 成果物与风险
+  const [deliverablesList, setDeliverablesList] = useState<Deliverable[]>([])
+  const [risksList, setRisksList] = useState<RiskEvent[]>([])
+  const [expandedDeliverable, setExpandedDeliverable] = useState<string | null>(null)
+  const [ackingRisk, setAckingRisk] = useState<string | null>(null)
+  // 成果物退回面板（带修改意见）
+  const [deliverableRejectId, setDeliverableRejectId] = useState<string | null>(null)
+  const [deliverableRejectNote, setDeliverableRejectNote] = useState('')
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null)
+  // 聊天式修改指令
+  const [instructionOpen, setInstructionOpen] = useState<string | null>(null)
+  const [instructionText, setInstructionText] = useState<Record<string, string>>({})
+  const [sendingInstruction, setSendingInstruction] = useState<string | null>(null)
+  // 成果物 RPA 生成文件状态（deliverableId → 'generating' | 'done'）
+  const [generatingFile, setGeneratingFile] = useState<Record<string, 'generating' | 'done'>>({})
   // 阶段复盘
   const [stageReview, setStageReview] = useState<{
     fromStage: string; toStage: string
@@ -218,6 +262,19 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
     const res = await fetch(`/api/workspaces/${id}`)
     if (res.ok) setData(await res.json())
     setLoading(false)
+    // 并行加载成果物和风险
+    const [delRes, riskRes] = await Promise.all([
+      fetch(`/api/deliverables?workspaceId=${id}`),
+      fetch(`/api/risks?workspaceId=${id}`),
+    ])
+    if (delRes.ok) {
+      const d = await delRes.json()
+      setDeliverablesList(d.deliverables ?? [])
+    }
+    if (riskRes.ok) {
+      const r = await riskRes.json()
+      setRisksList(r.risks ?? [])
+    }
   }
 
   useEffect(() => { load() }, [id])
@@ -467,10 +524,12 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             {/* ── Tab 导航 ── */}
             <div className="bg-white rounded-t-xl border border-b-0 px-4 pt-3 pb-0 flex items-center gap-1">
               {([
-                { key: 'agents',    label: 'Agent 协作',  badge: null },
-                { key: 'decisions', label: '待你决策',    badge: pendingActions.length > 0 ? pendingActions.length : null },
-                { key: 'outputs',   label: '草稿与任务',  badge: null },
-                { key: 'signals',   label: '信号流',      badge: recentSignals?.length ?? null },
+                { key: 'situation',    label: '当前态势',    badge: null },
+                { key: 'agents',       label: 'Agent 协作',  badge: null },
+                { key: 'decisions',    label: '待你决策',    badge: pendingActions.length > 0 ? pendingActions.length : null },
+                { key: 'deliverables', label: '成果物',      badge: deliverablesList.filter(d => d.status !== 'archived').length > 0 ? deliverablesList.filter(d => d.status !== 'archived').length : null },
+                { key: 'outputs',      label: '草稿与任务',  badge: null },
+                { key: 'signals',      label: '信号流',      badge: recentSignals?.length ?? null },
               ] as { key: typeof activeTab; label: string; badge: number | null }[]).map(({ key, label, badge }) => (
                 <button
                   key={key}
@@ -493,10 +552,192 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
 
             {/* ── Tab 内联说明 ── */}
             <div className="bg-gray-50 border border-b-0 px-4 py-2">
-              {activeTab === 'agents' && <p className="text-xs text-gray-400">AI 数字员工正在处理这个商机 · 可查看判断过程、手动触发或重新运行</p>}
-              {activeTab === 'decisions' && <p className="text-xs text-gray-400">以下动作由 AI 提出，需要你审批后执行 · 通过=AI代你执行 · 驳回=告知AI原因并训练</p>}
-              {activeTab === 'outputs' && <p className="text-xs text-gray-400">AI 生成的对外草稿和待完成任务 · 处理后可帮助 AI 持续学习你的偏好</p>}
-              {activeTab === 'signals' && <p className="text-xs text-gray-400">流入这个战场的所有信号，按时间排列 · 是 AI 做出判断的原始依据</p>}
+              {activeTab === 'situation'    && <p className="text-xs text-gray-400">系统对该商机的当前理解 · 关键风险与机会 · 下一步行动建议</p>}
+              {activeTab === 'agents'      && <p className="text-xs text-gray-400">AI 数字员工正在处理这个商机 · 可查看判断过程、手动触发或重新运行</p>}
+              {activeTab === 'decisions'   && <p className="text-xs text-gray-400">以下动作由 AI 提出，需要你审批后执行 · 通过=AI代你执行 · 驳回=告知AI原因并训练</p>}
+              {activeTab === 'deliverables'&& <p className="text-xs text-gray-400">AI 生成的对外成果物 · 包括方案PPT、效果图、标书草稿、合同意见等 · 审批后可对外发送</p>}
+              {activeTab === 'outputs'     && <p className="text-xs text-gray-400">AI 生成的对外草稿和待完成任务 · 处理后可帮助 AI 持续学习你的偏好</p>}
+              {activeTab === 'signals'     && <p className="text-xs text-gray-400">流入这个战场的所有信号，按时间排列 · 是 AI 做出判断的原始依据</p>}
+            </div>
+
+            {/* ── Tab: 当前态势 ── */}
+            <div className={activeTab === 'situation' ? '' : 'hidden'}>
+              <div className="bg-white border border-t-0 rounded-b-xl divide-y">
+
+                {/* A. 系统整体理解 */}
+                <div className="px-4 py-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-blue-500" />
+                      <span className="text-sm font-semibold text-gray-800">系统当前理解</span>
+                    </div>
+                    <button
+                      onClick={() => runAgent('coordinator')}
+                      disabled={!!runningAgent}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 disabled:opacity-40"
+                    >
+                      {isCoordinatorRunning
+                        ? <><RefreshCw className="w-3 h-3 animate-spin" />分析中</>
+                        : <><RefreshCw className="w-3 h-3" />重新分析</>
+                      }
+                    </button>
+                  </div>
+
+                  {coordinatorRun?.outputSummary ? (
+                    <div className="bg-blue-50 rounded-lg px-3 py-2.5 text-sm text-blue-900 leading-relaxed">
+                      {coordinatorRun.outputSummary}
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 rounded-lg px-3 py-4 text-center">
+                      <p className="text-sm text-gray-400">系统尚未对此商机进行分析</p>
+                      <button
+                        onClick={() => runAgent('coordinator')}
+                        disabled={!!runningAgent}
+                        className="mt-2 text-xs text-blue-600 hover:underline disabled:opacity-40"
+                      >
+                        立即触发总控 Agent 分析 →
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 推理过程（可折叠） */}
+                  {coordinatorRun?.reasoningSummary && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">
+                        查看推理过程
+                      </summary>
+                      <p className="mt-1.5 text-xs text-gray-500 bg-gray-50 rounded px-3 py-2 border-l-2 border-gray-300 leading-relaxed">
+                        {coordinatorRun.reasoningSummary}
+                      </p>
+                    </details>
+                  )}
+                </div>
+
+                {/* B. 关键风险与机会判断 */}
+                {coordinatorDecisions.length > 0 && (
+                  <div className="px-4 py-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">关键风险与机会</p>
+                    <div className="space-y-2">
+                      {coordinatorDecisions.slice(0, 6).map((d) => {
+                        const severity = d.severityLevel ?? 1
+                        return (
+                          <div key={d.id} className={`rounded-lg px-3 py-2.5 flex items-start gap-2 ${
+                            severity >= 4 ? 'bg-red-50 border border-red-100' :
+                            severity >= 3 ? 'bg-amber-50 border border-amber-100' :
+                            'bg-gray-50 border border-gray-100'
+                          }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
+                              severity >= 4 ? 'bg-red-500' :
+                              severity >= 3 ? 'bg-amber-500' : 'bg-blue-400'
+                            }`} />
+                            <div className="flex-1">
+                              <p className="text-xs font-medium text-gray-800">{d.decisionLabel}</p>
+                              {d.rationaleSummary && (
+                                <p className="text-xs text-gray-500 mt-0.5">{d.rationaleSummary}</p>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* C. 结构化风险台账（来自 riskEvents） */}
+                {risksList.filter(r => r.status !== 'closed').length > 0 && (
+                  <div className="px-4 py-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                      风险台账 · {risksList.filter(r => r.status !== 'closed').length} 项未关闭
+                    </p>
+                    <div className="space-y-2">
+                      {risksList.filter(r => r.status !== 'closed').slice(0, 5).map(r => {
+                        const catLabels: Record<string, string> = {
+                          requirement_unclear: '需求不清', competitor: '竞品', decision_chain: '决策链',
+                          budget: '预算', compliance: '合规', bid_qualification: '投标资格',
+                          pricing_margin: '报价毛利', contract_terms: '合同', delivery_scope: '交付',
+                          customer_health: '客户健康',
+                        }
+                        const levelDot: Record<string, string> = {
+                          critical: 'bg-red-600', high: 'bg-red-400',
+                          medium: 'bg-amber-400', low: 'bg-gray-300',
+                        }
+                        return (
+                          <div key={r.id} className="flex items-start gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                            <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${levelDot[r.riskLevel] ?? 'bg-gray-300'}`} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[10px] bg-white border border-gray-200 text-gray-500 px-1 py-0.5 rounded">
+                                  {catLabels[r.riskCategory] ?? r.riskCategory}
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-700">{r.title}</p>
+                            </div>
+                            {r.status === 'detected' && (
+                              <button
+                                onClick={async () => {
+                                  setAckingRisk(r.id)
+                                  await fetch('/api/risks', {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ riskId: r.id, action: 'acknowledge' }),
+                                  })
+                                  setAckingRisk(null)
+                                  load()
+                                }}
+                                disabled={ackingRisk === r.id}
+                                className="text-[10px] text-blue-600 hover:underline flex-shrink-0 disabled:opacity-40"
+                              >
+                                确认
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* D. 下一步行动建议 */}
+                {lastSnapshot?.nextActionsJson && Array.isArray(lastSnapshot.nextActionsJson) && lastSnapshot.nextActionsJson.length > 0 && (
+                  <div className="px-4 py-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">建议下一步</p>
+                    <div className="space-y-1.5">
+                      {(lastSnapshot.nextActionsJson as string[]).map((action, i) => (
+                        <div key={i} className="flex items-start gap-2">
+                          <span className="text-xs text-blue-500 font-bold mt-0.5 flex-shrink-0">{i + 1}</span>
+                          <p className="text-xs text-gray-700">{action}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* E. 待审批摘要（有待决策时展示提示） */}
+                {pendingActions.length > 0 && (
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
+                      <p className="text-xs text-orange-700">
+                        有 <strong>{pendingActions.length}</strong> 项动作等待你的审批
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('decisions')}
+                      className="text-xs text-orange-600 hover:underline font-medium"
+                    >
+                      去审批 →
+                    </button>
+                  </div>
+                )}
+
+                {/* 空状态 */}
+                {!coordinatorRun && coordinatorDecisions.length === 0 && risksList.length === 0 && pendingActions.length === 0 && (
+                  <div className="px-4 py-10 text-center">
+                    <p className="text-sm text-gray-400">系统尚未开始分析此商机</p>
+                    <p className="text-xs text-gray-300 mt-1">点击「重新分析」让总控 Agent 读取信号并给出完整判断</p>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* ── Tab 1: Agent 协作 ── */}
@@ -1065,6 +1306,339 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             </div>{/* end Tab1 inner p-4 */}
             </div>{/* end Tab1 space-y-4 */}
 
+            {/* ── Tab: 成果物 ── */}
+            <div className={activeTab === 'deliverables' ? '' : 'hidden'}>
+              <div className="bg-white border border-t-0 rounded-b-xl">
+                {deliverablesList.length === 0 ? (
+                  <div className="px-4 py-10 text-center">
+                    <PackageOpen className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+                    <p className="text-sm text-gray-400">暂无成果物</p>
+                    <p className="text-xs text-gray-300 mt-1">AI 生成方案PPT、效果图、标书草稿等后会出现在这里</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {deliverablesList.map(d => {
+                      const typeLabels: Record<string, string> = {
+                        solution_ppt: '方案PPT', scene_render: '场地效果图', layout_plan: '场地平面图',
+                        safety_proposal: '安全培训方案', requirement_summary: '需求摘要',
+                        bid_package: '投标文件', bid_prelim: '标前立项', contract_review: '合同审查意见',
+                        handover_package: '交接包', acceptance_doc: '验收文件', after_sales_report: '售后报告',
+                        quotation: '报价单', other: '其他',
+                      }
+                      const statusConfig: Record<string, { label: string; cls: string }> = {
+                        drafting: { label: '草稿中', cls: 'bg-gray-100 text-gray-500' },
+                        pending_review: { label: '待审核', cls: 'bg-amber-50 text-amber-600' },
+                        approved: { label: '已批准', cls: 'bg-green-50 text-green-600' },
+                        sent: { label: '已发送', cls: 'bg-blue-50 text-blue-600' },
+                        archived: { label: '已归档', cls: 'bg-gray-50 text-gray-400' },
+                      }
+                      const st = statusConfig[d.status] ?? { label: d.status, cls: 'bg-gray-100 text-gray-500' }
+                      const isExpanded = expandedDeliverable === d.id
+                      return (
+                        <div key={d.id} className="px-4 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded font-medium">
+                                  {typeLabels[d.type] ?? d.type}
+                                </span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded ${st.cls}`}>
+                                  {st.label}
+                                </span>
+                                {d.version > 1 && (
+                                  <span className="text-[10px] text-gray-400">v{d.version}</span>
+                                )}
+                                {d.stage && (
+                                  <span className="text-[10px] text-gray-400">· {d.stage}</span>
+                                )}
+                              </div>
+                              <p className="text-sm font-medium text-gray-800 truncate">{d.title}</p>
+                              {d.audience && (
+                                <p className="text-xs text-gray-400 mt-0.5">受众：{d.audience}</p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              {d.content && (
+                                <button
+                                  onClick={() => setExpandedDeliverable(isExpanded ? null : d.id)}
+                                  className="text-[10px] text-blue-600 hover:underline"
+                                >
+                                  {isExpanded ? '收起' : '预览'}
+                                </button>
+                              )}
+                              {(d.status === 'drafting' || d.status === 'pending_review') && (
+                                <button
+                                  onClick={async () => {
+                                    await fetch('/api/deliverables', {
+                                      method: 'PATCH',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ deliverableId: d.id, action: 'approve' }),
+                                    })
+                                    showToast(`${d.title} 已批准`)
+                                    load()
+                                  }}
+                                  className="text-[10px] px-2 py-0.5 bg-green-50 text-green-600 rounded hover:bg-green-100 border border-green-200"
+                                >
+                                  批准
+                                </button>
+                              )}
+                              {d.status === 'approved' && (
+                                <button
+                                  onClick={async () => {
+                                    await fetch('/api/deliverables', {
+                                      method: 'PATCH',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ deliverableId: d.id, action: 'mark_sent' }),
+                                    })
+                                    showToast(`${d.title} 已标记为发送`)
+                                    load()
+                                  }}
+                                  className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 border border-blue-200"
+                                >
+                                  标记发送
+                                </button>
+                              )}
+                              {/* 生成真实文件按钮：已批准且无 fileUrl 时显示 */}
+                              {d.status === 'approved' && !d.fileUrl && generatingFile[d.id] !== 'done' && (
+                                <button
+                                  disabled={generatingFile[d.id] === 'generating'}
+                                  onClick={async () => {
+                                    setGeneratingFile(prev => ({ ...prev, [d.id]: 'generating' }))
+                                    try {
+                                      await fetch('/api/deliverables', {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ deliverableId: d.id, action: 'trigger_rpa' }),
+                                      })
+                                      // 每 3 秒轮询，等 fileUrl 写回
+                                      const poll = setInterval(async () => {
+                                        const res = await fetch(`/api/deliverables?workspaceId=${id}`)
+                                        const data = await res.json() as { deliverables: Deliverable[] }
+                                        const updated = data.deliverables.find((x: Deliverable) => x.id === d.id)
+                                        if (updated?.fileUrl) {
+                                          clearInterval(poll)
+                                          setGeneratingFile(prev => ({ ...prev, [d.id]: 'done' }))
+                                          setDeliverablesList(data.deliverables)
+                                          showToast(`✅ 文件已生成，点击下载`)
+                                        }
+                                      }, 3000)
+                                      // 超时保护：60 秒后停止轮询
+                                      setTimeout(() => clearInterval(poll), 60000)
+                                    } catch {
+                                      setGeneratingFile(prev => { const n = {...prev}; delete n[d.id]; return n })
+                                    }
+                                  }}
+                                  className="text-[10px] px-2 py-0.5 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 border border-purple-200 disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {generatingFile[d.id] === 'generating' ? (
+                                    <><span className="inline-block w-2.5 h-2.5 border border-purple-400 border-t-transparent rounded-full animate-spin" />生成中…</>
+                                  ) : '生成文件'}
+                                </button>
+                              )}
+                              {/* 已有文件 URL：显示下载链接 */}
+                              {d.fileUrl && (
+                                <a
+                                  href={d.fileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] px-2 py-0.5 bg-green-50 text-green-700 rounded hover:bg-green-100 border border-green-300 font-medium"
+                                >
+                                  ↓ 下载文件
+                                </a>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setDeliverableRejectId(d.id)
+                                  setDeliverableRejectNote('')
+                                }}
+                                className="text-[10px] px-2 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100 border border-red-200"
+                              >
+                                退回
+                              </button>
+                            </div>
+                          </div>
+                          {/* 退回 / 重新生成面板 */}
+                          {deliverableRejectId === d.id && (
+                            <div className="mt-2 pt-2 border-t border-red-100 bg-red-50/40 rounded-lg px-3 pb-3">
+                              <p className="text-[10px] font-medium text-red-600 mb-1.5 flex items-center gap-1">
+                                <span>✕</span> 修改意见（越具体数字员工改得越准）
+                              </p>
+                              <textarea
+                                value={deliverableRejectNote}
+                                onChange={e => setDeliverableRejectNote(e.target.value)}
+                                placeholder="例：第5页行业案例太空洞，改成中石化炼化工程的真实部署数据，包含培训人数和事故下降率…"
+                                className="w-full border border-red-200 rounded px-2.5 py-1.5 text-xs h-16 resize-none mb-2 bg-white"
+                                autoFocus
+                              />
+                              <div className="flex gap-1.5 justify-end">
+                                <button
+                                  onClick={() => setDeliverableRejectId(null)}
+                                  className="px-2.5 py-1 border rounded text-xs text-gray-500 hover:bg-gray-50"
+                                >
+                                  取消
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    await fetch('/api/deliverables', {
+                                      method: 'PATCH',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        deliverableId: d.id,
+                                        action: 'reject',
+                                        reviewNote: deliverableRejectNote,
+                                      }),
+                                    })
+                                    showToast(`已退回「${d.title}」，修改意见已写入训练样本`)
+                                    setDeliverableRejectId(null)
+                                    load()
+                                  }}
+                                  className="px-2.5 py-1 bg-red-100 text-red-700 border border-red-200 rounded text-xs hover:bg-red-200"
+                                >
+                                  仅退回
+                                </button>
+                                <button
+                                  disabled={!deliverableRejectNote.trim() || regeneratingId === d.id}
+                                  onClick={async () => {
+                                    if (!deliverableRejectNote.trim()) return
+                                    setRegeneratingId(d.id)
+                                    try {
+                                      const res = await fetch('/api/deliverables', {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          deliverableId: d.id,
+                                          action: 'reject_and_regenerate',
+                                          reviewNote: deliverableRejectNote,
+                                        }),
+                                      })
+                                      const json = await res.json() as { success?: boolean; newDeliverableId?: string; error?: string }
+                                      if (json.success) {
+                                        showToast('数字员工正在按意见修改，新版已生成，请审批')
+                                        setDeliverableRejectId(null)
+                                        load()
+                                      } else {
+                                        showToast(`重新生成失败：${json.error}`)
+                                      }
+                                    } finally {
+                                      setRegeneratingId(null)
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {regeneratingId === d.id ? (
+                                    <><span className="animate-spin inline-block w-3 h-3 border border-white border-t-transparent rounded-full" /> 生成中…</>
+                                  ) : '↻ 按意见重新生成'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {/* 内容预览 */}
+                          {isExpanded && d.content && (
+                            <div className="mt-3 bg-gray-50 rounded-lg p-3">
+                              {(() => {
+                                // 尝试解析 slides JSON
+                                try {
+                                  const parsed = JSON.parse(d.content)
+                                  if (parsed?.slides && Array.isArray(parsed.slides)) {
+                                    return (
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold text-gray-600 mb-2">{parsed.title ?? d.title}</p>
+                                        {(parsed.slides as Array<{ page: number; title: string; bullets: string[]; notes?: string }>).map((slide) => (
+                                          <div key={slide.page} className="bg-white rounded border px-3 py-2">
+                                            <p className="text-xs font-medium text-gray-700 mb-1">P{slide.page}. {slide.title}</p>
+                                            <ul className="space-y-0.5">
+                                              {slide.bullets.map((b, i) => (
+                                                <li key={i} className="text-[11px] text-gray-500 flex items-start gap-1.5">
+                                                  <span className="text-blue-400 flex-shrink-0">·</span>{b}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )
+                                  }
+                                } catch { /* not JSON, show as text */ }
+                                return (
+                                  <pre className="text-[11px] text-gray-600 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                                    {d.content}
+                                  </pre>
+                                )
+                              })()}
+                            </div>
+                          )}
+                          {/* 聊天式修改指令（所有状态都可用） */}
+                          {instructionOpen === d.id ? (
+                            <div className="mt-2 pt-2 border-t border-indigo-100 bg-indigo-50/30 rounded-lg px-3 pb-3">
+                              <p className="text-[10px] font-medium text-indigo-600 mb-1.5">发送修改指令给数字员工</p>
+                              <textarea
+                                value={instructionText[d.id] ?? ''}
+                                onChange={e => setInstructionText(prev => ({ ...prev, [d.id]: e.target.value }))}
+                                placeholder="例：帮我把第3页技术架构加上WebGL渲染引擎和离线部署方案的内容；或：整体语气改得更简洁，减少形容词"
+                                className="w-full border border-indigo-200 rounded px-2.5 py-1.5 text-xs h-16 resize-none mb-2 bg-white"
+                                autoFocus
+                              />
+                              <div className="flex gap-1.5 justify-end">
+                                <button
+                                  onClick={() => setInstructionOpen(null)}
+                                  className="px-2.5 py-1 border rounded text-xs text-gray-500 hover:bg-gray-50"
+                                >
+                                  取消
+                                </button>
+                                <button
+                                  disabled={!(instructionText[d.id] ?? '').trim() || sendingInstruction === d.id}
+                                  onClick={async () => {
+                                    const note = (instructionText[d.id] ?? '').trim()
+                                    if (!note) return
+                                    setSendingInstruction(d.id)
+                                    try {
+                                      const res = await fetch('/api/deliverables', {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          deliverableId: d.id,
+                                          action: 'reject_and_regenerate',
+                                          reviewNote: note,
+                                        }),
+                                      })
+                                      const json = await res.json() as { success?: boolean; newDeliverableId?: string; error?: string }
+                                      if (json.success) {
+                                        showToast('数字员工已收到指令，正在修改中，新版即将出现')
+                                        setInstructionOpen(null)
+                                        setInstructionText(prev => { const n = { ...prev }; delete n[d.id]; return n })
+                                        load()
+                                      } else {
+                                        showToast(`指令发送失败：${json.error}`)
+                                      }
+                                    } finally {
+                                      setSendingInstruction(null)
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {sendingInstruction === d.id ? (
+                                    <><span className="animate-spin inline-block w-3 h-3 border border-white border-t-transparent rounded-full" /> 发送中…</>
+                                  ) : '发送给数字员工 →'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setInstructionOpen(d.id)}
+                              className="mt-1.5 text-[10px] text-indigo-400 hover:text-indigo-600 flex items-center gap-0.5"
+                            >
+                              <span>✎</span> 发修改指令给数字员工
+                            </button>
+                          )}
+                          <p className="text-[10px] text-gray-300 mt-1.5">{formatRelativeTime(d.createdAt)}</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* ── Tab 2: 待你决策 ── */}
             <div className={activeTab === 'decisions' ? '' : 'hidden'}>
               <div className="bg-white border border-t-0 rounded-b-xl">
@@ -1322,8 +1896,77 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
                 )}
               </div>
             )}
-            {/* 风险摘要 */}
-            {lastSnapshot?.riskSummary && (
+            {/* 风险台账（结构化） */}
+            {risksList.filter(r => r.status !== 'closed').length > 0 ? (
+              <div className="bg-white rounded-xl border">
+                <div className="px-4 py-3 border-b flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-red-500" />
+                  <span className="text-sm font-medium">风险台账</span>
+                  <span className="text-xs text-red-100 bg-red-500 px-1.5 py-0.5 rounded-full ml-auto font-medium">
+                    {risksList.filter(r => r.status !== 'closed').length}
+                  </span>
+                </div>
+                <div className="divide-y">
+                  {risksList.filter(r => r.status !== 'closed').slice(0, 5).map(r => {
+                    const levelConfig: Record<string, { dot: string; bg: string }> = {
+                      critical: { dot: 'bg-red-600', bg: 'bg-red-50' },
+                      high:     { dot: 'bg-red-400', bg: 'bg-red-50' },
+                      medium:   { dot: 'bg-amber-400', bg: 'bg-amber-50' },
+                      low:      { dot: 'bg-gray-300', bg: 'bg-gray-50' },
+                    }
+                    const catLabels: Record<string, string> = {
+                      requirement_unclear: '需求不清', competitor: '竞品', decision_chain: '决策链',
+                      budget: '预算', compliance: '合规', bid_qualification: '投标资格',
+                      pricing_margin: '报价毛利', contract_terms: '合同', delivery_scope: '交付',
+                      customer_health: '客户健康',
+                    }
+                    const lc = levelConfig[r.riskLevel] ?? { dot: 'bg-gray-300', bg: 'bg-gray-50' }
+                    return (
+                      <div key={r.id} className={`px-4 py-2.5 ${lc.bg}`}>
+                        <div className="flex items-start gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${lc.dot}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                              <span className="text-[10px] bg-white border border-gray-200 text-gray-500 px-1 py-0.5 rounded">
+                                {catLabels[r.riskCategory] ?? r.riskCategory}
+                              </span>
+                              {r.status === 'detected' && (
+                                <span className="text-[10px] text-amber-600">待确认</span>
+                              )}
+                              {r.status === 'escalated' && (
+                                <span className="text-[10px] text-red-600 font-medium">已升级</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-700 font-medium leading-tight">{r.title}</p>
+                            {r.recommendedAction && (
+                              <p className="text-[10px] text-gray-500 mt-0.5">建议：{r.recommendedAction}</p>
+                            )}
+                          </div>
+                          {r.status === 'detected' && (
+                            <button
+                              onClick={async () => {
+                                setAckingRisk(r.id)
+                                await fetch('/api/risks', {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ riskId: r.id, action: 'acknowledge' }),
+                                })
+                                setAckingRisk(null)
+                                load()
+                              }}
+                              disabled={ackingRisk === r.id}
+                              className="text-[10px] text-blue-600 hover:underline flex-shrink-0 disabled:opacity-40"
+                            >
+                              确认
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : lastSnapshot?.riskSummary ? (
               <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
@@ -1331,7 +1974,7 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
                 </div>
                 <p className="text-xs text-amber-800">{lastSnapshot.riskSummary}</p>
               </div>
-            )}
+            ) : null}
 
             {/* 下一步行动建议（从快照取） */}
             {lastSnapshot?.nextActionsJson && Array.isArray(lastSnapshot.nextActionsJson) && lastSnapshot.nextActionsJson.length > 0 && (

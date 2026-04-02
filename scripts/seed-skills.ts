@@ -689,6 +689,34 @@ const PRESET_SKILLS: SkillPreset[] = [
   },
 ]
 
+// ─── 内置工具直接绑定（不需要 skillTemplate，直接 toolId 指向 tool-registry.ts 中的工具） ───
+// 这些绑定让 Agent 在 system prompt 中看到对应的内置工具
+
+const BUILTIN_BINDINGS = [
+  // web.browse：售前、招标、协调员可用
+  { id: 'builtin-b-001', agentType: 'presales_assistant', toolId: 'web.browse' },
+  { id: 'builtin-b-002', agentType: 'tender_assistant',   toolId: 'web.browse' },
+  { id: 'builtin-b-003', agentType: 'coordinator',        toolId: 'web.browse' },
+  // wecom.send_message：销售、协调员
+  { id: 'builtin-b-004', agentType: 'sales',              toolId: 'wecom.send_message' },
+  { id: 'builtin-b-005', agentType: 'coordinator',        toolId: 'wecom.send_message' },
+  // dingtalk.send_message：销售、协调员、交付
+  { id: 'builtin-b-006', agentType: 'sales',              toolId: 'dingtalk.send_message' },
+  { id: 'builtin-b-007', agentType: 'coordinator',        toolId: 'dingtalk.send_message' },
+  { id: 'builtin-b-008', agentType: 'handover',           toolId: 'dingtalk.send_message' },
+  // email.send：销售、交付
+  { id: 'builtin-b-009', agentType: 'sales',              toolId: 'email.send' },
+  { id: 'builtin-b-010', agentType: 'handover',           toolId: 'email.send' },
+  // RPA 工具
+  { id: 'builtin-b-011', agentType: 'presales_assistant', toolId: 'rpa.create_pptx' },
+  { id: 'builtin-b-012', agentType: 'tender_assistant',   toolId: 'rpa.create_docx' },
+  { id: 'builtin-b-013', agentType: 'handover',           toolId: 'rpa.create_docx' },
+  { id: 'builtin-b-014', agentType: 'sales',              toolId: 'rpa.create_xlsx' },
+  { id: 'builtin-b-015', agentType: 'coordinator',        toolId: 'rpa.create_xlsx' },
+  { id: 'builtin-b-016', agentType: 'presales_assistant', toolId: 'rpa.browse_login' },
+  { id: 'builtin-b-017', agentType: 'tender_assistant',   toolId: 'rpa.browse_login' },
+]
+
 async function seedSkills() {
   console.log('🎯 开始写入预置技能库（商机全过程）...\n')
 
@@ -746,6 +774,26 @@ async function seedSkills() {
   console.log(`   技能模板：${templateCount} 条新增，${skippedCount} 条已存在`)
   console.log(`   Agent 绑定：${skillCount} 条新增`)
   console.log(`\n阶段覆盖：需求挖掘 → 方案设计 → 招投标 → 商务谈判 → 合同签订 → 交付 → 售后`)
+
+  // 写入内置工具绑定
+  console.log('\n🔧 写入内置工具绑定...')
+  let builtinCount = 0
+  for (const b of BUILTIN_BINDINGS) {
+    const existing = await db.query.agentSkills.findFirst({ where: eq(agentSkills.id, b.id) })
+    if (!existing) {
+      await db.insert(agentSkills).values({
+        id: b.id,
+        agentType: b.agentType as any,
+        toolId: b.toolId,
+        skillTemplateId: null,
+        enabled: true,
+        config: null,
+        defaultParamsJson: null,
+      })
+      builtinCount++
+    }
+  }
+  console.log(`   内置工具绑定：${builtinCount} 条新增`)
 }
 
 seedSkills()

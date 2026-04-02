@@ -14,6 +14,9 @@ export type ToolResult = {
   data?: Record<string, unknown>
 }
 
+/** 工具风险等级：只读/内部写入/外部发送 */
+export type ToolRiskLevel = 'readonly' | 'internal_write' | 'external_send'
+
 export type ToolDef = {
   id: string
   name: string
@@ -23,6 +26,12 @@ export type ToolDef = {
   requiresConnector: string | null
   /** 是否支持在沙盘中测试 */
   testable: boolean
+  /** 风险等级：readonly=只读查询，internal_write=内部写入（任务/草稿），external_send=对外发送（需审批） */
+  riskLevel: ToolRiskLevel
+  /** 超时时间（毫秒），默认 30000 */
+  timeoutMs?: number
+  /** 输出字段描述，Agent 可参考 */
+  outputSchema?: Record<string, string>
   /** 执行函数：toolInput 来自 actionPayloadJson.toolInput，connectorConfig 来自 connectorInstances.configJson */
   execute: (toolInput: Record<string, unknown>, connectorConfig?: Record<string, unknown>) => Promise<ToolResult>
 }
@@ -96,12 +105,38 @@ async function sendEmail(
   input: Record<string, unknown>,
   _config?: Record<string, unknown>
 ): Promise<ToolResult> {
-  const { to, subject, body } = input as { to?: string; subject?: string; body?: string }
+  const { to, subject, body, workspaceId } = input as {
+    to?: string; subject?: string; body?: string; workspaceId?: string
+  }
   if (!to || !subject || !body) {
     return { success: false, message: '缺少 to、subject 或 body 参数' }
   }
-  // Placeholder — 实际实现需接入 SMTP 或 SendGrid
-  return { success: false, message: '邮件发送功能尚未配置，请联系管理员配置 SMTP 服务' }
+  if (!workspaceId) {
+    return { success: false, message: '缺少 workspaceId，无法写入草稿' }
+  }
+  // 写入 drafts 表，走人工审阅发送流程
+  try {
+    const { db } = await import('@/db')
+    const { drafts } = await import('@/db/schema')
+    const { generateId } = await import('@/lib/utils')
+    const id = generateId()
+    await db.insert(drafts).values({
+      id,
+      workspaceId,
+      draftType: 'email',
+      title: subject,
+      recipientInfo: { to, subject, channel: 'email' },
+      content: body,
+      draftStatus: 'pending_review',
+    })
+    return {
+      success: true,
+      message: `邮件草稿已写入审阅队列（收件人：${to}，主题：${subject}），请前往「草稿中心」发送`,
+      data: { draftId: id, to, subject },
+    }
+  } catch (e) {
+    return { success: false, message: `写入草稿失败：${String(e)}` }
+  }
 }
 
 async function browseWeb(
@@ -177,6 +212,104 @@ async function createPpt(
   }
 }
 
+// ── RPA 工具实现 ───────────────────────────────────────────────────────────────
+
+async function callRpaServer(
+  taskType: string,
+  taskParams: Record<string, unknown>
+): Promise<ToolResult> {
+  const rpaUrl = process.env.RPA_SERVER_URL
+  if (!rpaUrl) {
+    return {
+      success: false,
+      message: 'RPA 服务未配置，请在环境变量 RPA_SERVER_URL 中设置机器地址（如 http://192.168.1.100:8000）',
+    }
+  }
+  try {
+    const res = await fetch(`${rpaUrl}/api/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskType, taskParams }),
+    })
+    const json = await res.json() as {
+      taskExecutionId?: string
+      status?: string
+      outputData?: Record<string, unknown>
+      fileUrl?: string
+      error?: string
+    }
+    if (res.ok) {
+      return {
+        success: true,
+        message: `RPA 任务已提交（ID: ${json.taskExecutionId ?? '-'}）`,
+        data: {
+          taskExecutionId: json.taskExecutionId,
+          status: json.status ?? 'pending',
+          fileUrl: json.fileUrl,
+          ...(json.outputData ?? {}),
+        },
+      }
+    }
+    return { success: false, message: `RPA 服务错误：${json.error ?? res.status}` }
+  } catch (e) {
+    return { success: false, message: `RPA 机器不可达：${String(e)}` }
+  }
+}
+
+async function rpaCreatePptx(
+  input: Record<string, unknown>,
+  _config?: Record<string, unknown>
+): Promise<ToolResult> {
+  const { deliverableId, slides, title } = input as {
+    deliverableId?: string
+    slides?: unknown
+    title?: string
+  }
+  return callRpaServer('create_pptx', { deliverableId, slides, title })
+}
+
+async function rpaCreateDocx(
+  input: Record<string, unknown>,
+  _config?: Record<string, unknown>
+): Promise<ToolResult> {
+  const { deliverableId, sections, title, docType } = input as {
+    deliverableId?: string
+    sections?: unknown
+    title?: string
+    docType?: string
+  }
+  return callRpaServer('create_docx', { deliverableId, sections, title, docType })
+}
+
+async function rpaCreateXlsx(
+  input: Record<string, unknown>,
+  _config?: Record<string, unknown>
+): Promise<ToolResult> {
+  const { deliverableId, rows, title, customerName, totalAmount } = input as {
+    deliverableId?: string
+    rows?: unknown
+    title?: string
+    customerName?: string
+    totalAmount?: number
+  }
+  return callRpaServer('create_xlsx', { deliverableId, rows, title, customerName, totalAmount })
+}
+
+async function rpaBrowseLogin(
+  input: Record<string, unknown>,
+  _config?: Record<string, unknown>
+): Promise<ToolResult> {
+  const { targetSite, query, credentials } = input as {
+    targetSite?: string
+    query?: string
+    credentials?: Record<string, string>
+  }
+  if (!targetSite || !query) {
+    return { success: false, message: '缺少 targetSite 或 query 参数' }
+  }
+  return callRpaServer('browse_login', { targetSite, query, credentials })
+}
+
 // ── 注册表 ────────────────────────────────────────────────────────────────────
 
 export const TOOLS: ToolDef[] = [
@@ -187,6 +320,9 @@ export const TOOLS: ToolDef[] = [
     description: '向指定企业微信用户发送文本消息。需要先在「连接器与模型」中完成企业微信授权。',
     requiresConnector: 'wecom',
     testable: true,
+    riskLevel: 'external_send',
+    timeoutMs: 10000,
+    outputSchema: { msgid: '消息 ID' },
     execute: sendWecomMessage,
   },
   {
@@ -196,6 +332,9 @@ export const TOOLS: ToolDef[] = [
     description: '通过钉钉 Webhook 机器人发送消息到指定群。需要先在「连接器与模型」中配置钉钉 Webhook。',
     requiresConnector: 'dingtalk',
     testable: true,
+    riskLevel: 'external_send',
+    timeoutMs: 10000,
+    outputSchema: {},
     execute: sendDingtalkMessage,
   },
   {
@@ -205,6 +344,9 @@ export const TOOLS: ToolDef[] = [
     description: '发送邮件给指定收件人。需要管理员配置 SMTP 或邮件服务 API。',
     requiresConnector: null,
     testable: false,
+    riskLevel: 'external_send',
+    timeoutMs: 15000,
+    outputSchema: { draftId: '草稿 ID（待人工审阅后发送）', to: '收件人', subject: '主题' },
     execute: sendEmail,
   },
   {
@@ -214,6 +356,9 @@ export const TOOLS: ToolDef[] = [
     description: '访问指定 URL，获取页面内容并按指令提取信息（如查看竞品官网、获取招标信息）。',
     requiresConnector: null,
     testable: true,
+    riskLevel: 'readonly',
+    timeoutMs: 20000,
+    outputSchema: { url: '目标 URL', content: '提取的文本内容（最多 3000 字）', length: '原始内容字数' },
     execute: browseWeb,
   },
   {
@@ -223,7 +368,58 @@ export const TOOLS: ToolDef[] = [
     description: '根据标题和大纲生成演示文稿。支持方案 PPT、汇报 PPT 等场景。',
     requiresConnector: null,
     testable: true,
+    riskLevel: 'internal_write',
+    timeoutMs: 30000,
+    outputSchema: { draftId: '草稿 ID', title: 'PPT 标题' },
     execute: createPpt,
+  },
+  {
+    id: 'rpa.create_pptx',
+    name: '生成真实PPT文件',
+    category: 'document',
+    description: '调用 RPA 引擎，将方案大纲（slides JSON）转换为真实 .pptx 文件（含排版）。通常在 generate_solution_ppt 审批通过后调用，传入 deliverableId 和 slides。需配置 RPA_SERVER_URL 环境变量。',
+    requiresConnector: null,
+    testable: true,
+    riskLevel: 'internal_write',
+    timeoutMs: 120000,
+    outputSchema: { taskExecutionId: 'RPA 任务 ID', fileUrl: '生成的 .pptx 文件下载地址', status: '任务状态' },
+    execute: rpaCreatePptx,
+  },
+  {
+    id: 'rpa.create_docx',
+    name: '生成真实Word文档',
+    category: 'document',
+    description: '调用 RPA 引擎，将投标文件/合同意见/交接包等文本内容转换为规范的 .docx 文件（含页眉页脚/公司抬头）。需配置 RPA_SERVER_URL 环境变量。',
+    requiresConnector: null,
+    testable: true,
+    riskLevel: 'internal_write',
+    timeoutMs: 120000,
+    outputSchema: { taskExecutionId: 'RPA 任务 ID', fileUrl: '生成的 .docx 文件下载地址', status: '任务状态' },
+    execute: rpaCreateDocx,
+  },
+  {
+    id: 'rpa.create_xlsx',
+    name: '生成真实报价单',
+    category: 'document',
+    description: '调用 RPA 引擎，将报价数据转换为 .xlsx 报价单（含公司抬头/合计公式/折扣说明）。通常在 generate_quotation 审批通过后调用。需配置 RPA_SERVER_URL 环境变量。',
+    requiresConnector: null,
+    testable: true,
+    riskLevel: 'internal_write',
+    timeoutMs: 60000,
+    outputSchema: { taskExecutionId: 'RPA 任务 ID', fileUrl: '生成的 .xlsx 文件下载地址', status: '任务状态' },
+    execute: rpaCreateXlsx,
+  },
+  {
+    id: 'rpa.browse_login',
+    name: 'RPA 浏览器查询',
+    category: 'data',
+    description: '调用 RPA 引擎，自动登录指定系统（天眼查/内部 CRM/投标平台），查询并返回结构化数据。需配置 RPA_SERVER_URL 环境变量，并在 credentials 中传入账号密码。',
+    requiresConnector: null,
+    testable: false,
+    riskLevel: 'readonly',
+    timeoutMs: 180000,
+    outputSchema: { queryResult: '查询结果（JSON）', screenshotUrl: '截图地址（可选）', taskExecutionId: 'RPA 任务 ID' },
+    execute: rpaBrowseLogin,
   },
 ]
 

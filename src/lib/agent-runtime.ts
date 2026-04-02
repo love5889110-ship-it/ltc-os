@@ -3,6 +3,7 @@ import { db } from '@/db'
 import { agentRuns, agentDecisions, agentActions, agentThreads, stateSnapshots, agentRules, assets, assetUsages, agentPrompts, agentMemory, opportunityWorkspaces } from '@/db/schema'
 import { generateId } from '@/lib/utils'
 import type { AgentType, AgentRunResult, ActionType } from '@/types'
+import { resolveApprovalMode, actionStatusFromApprovalMode, requiresApprovalFromMode } from '@/lib/approval-policy'
 import { eq, and, desc } from 'drizzle-orm'
 import { getAISettings } from '@/lib/ai-settings'
 import { notifyPendingApproval } from '@/lib/notify'
@@ -77,6 +78,10 @@ ${BUSINESS_CONTEXT}
 - **商务谈判阶段**：警惕最终决策人突变，识别价格战信号，优先用价值替代降价（增加培训场景数/延长服务期）
 - 当竞品报价明显低于我方时：发出 risk_alert，建议分析对方成本结构和服务差距
 
+## 预置能力触发规则
+- 当商机进入商务谈判阶段且客户询价时，使用 generate_quotation（payload.title=报价单标题，payload.customerName=客户名，payload.products=目标产品，executorCategory=execution，requiresApproval=false）
+- 当报价单内容审批通过需生成 Excel 文件时，使用 call_tool（toolId=rpa.create_xlsx，payload.toolInput.deliverableId=已审批的deliverableId）
+
 输出必须是严格的 JSON 格式，包含 decisions（判断列表）和 actions（行动列表）。`,
 
   presales_assistant: `你是一名解决方案助手数字员工，服务于工业VR安全培训公司的解决方案团队。
@@ -92,6 +97,10 @@ ${BUSINESS_CONTEXT}
 - 需求调研清单：培训人数、场景类型、年培训次数、硬件部署条件（standalone/PC）
 - 当客户在电力行业时：主动分析与幻威/万特的差异化优势
 - 当方案竞争力被质疑时：立即发出 risk_alert 并建议引入案例背书
+
+## 预置能力触发规则
+- 当判断需要制作方案PPT或演示材料时，使用 generate_solution_ppt（payload.title=PPT标题，payload.topic=方案主题，executorCategory=execution，requiresApproval=false）
+- 当判断需要场地效果图或现场模拟图时，使用 generate_scene_render（payload.title=图标题，payload.requirements=效果需求描述，executorCategory=execution，requiresApproval=false）
 
 输出必须是严格的 JSON 格式。`,
 
@@ -110,6 +119,11 @@ ${BUSINESS_CONTEXT}
 - 标期不足7天 → 立即发出 risk_alert 并创建紧急任务
 - 投标文件中有行业特定要求（如煤矿安标、电力资质）→ 检查我方资质是否满足
 
+## 预置能力触发规则
+- 当判断需要生成完整投标文件或标书时，使用 generate_tender_doc（payload.title=文件标题，payload.tenderBrief=核心需求摘要，executorCategory=execution，requiresApproval=false）
+- 当收到招标文件内容需要解析时，使用 parse_tender_document（payload.title=解析任务标题，payload.content=招标文件内容，executorCategory=execution，requiresApproval=false）
+- 当需要提取合同潜在风险时，使用 extract_contract_risks（payload.title=合同风险分析，payload.contractContent=合同文本，executorCategory=execution，requiresApproval=false）
+
 输出必须是严格的 JSON 格式。`,
 
   handover: `你是一名交付助手数字员工，服务于工业VR安全培训公司的交付团队。
@@ -126,6 +140,10 @@ ${BUSINESS_CONTEXT}
 - 记录销售阶段的所有承诺（额外场景、特殊定制、优惠条件）
 - 确认客户端关键联系人（项目负责人、IT对接人、最终验收人）
 
+## 预置能力触发规则
+- 当需要制作完整安全培训方案时，使用 generate_safety_proposal（payload.title=方案标题，payload.customerIndustry=行业，payload.sceneType=场景类型，payload.traineeCount=人数，executorCategory=execution，requiresApproval=false）
+- 当投标文件/交接包内容已审批，需生成 Word 文件时，使用 call_tool（toolId=rpa.create_docx，payload.toolInput.deliverableId=已审批的deliverableId）
+
 输出必须是严格的 JSON 格式。`,
 
   service_triage: `你是一名服务分诊数字员工，服务于工业VR安全培训公司的售后服务团队。
@@ -141,6 +159,9 @@ ${BUSINESS_CONTEXT}
 - 硬件故障（设备损坏/头显故障）→ 立即创建维修任务，severity:5
 - 培训场景内容不满足新需求 → 发出 opportunity_found，建议增购
 - 客户反映竞品价格更低或功能更好 → 发出 risk_alert，联动销售介入
+
+## 预置能力触发规则
+- 当周期性服务跟进需要出具报告时，使用 generate_after_sales_report（payload.title=报告标题，payload.period=报告周期，executorCategory=execution，requiresApproval=false）
 
 输出必须是严格的 JSON 格式。`,
 
@@ -177,14 +198,25 @@ const OUTPUT_SCHEMA = `
   ],
   "actions": [
     {
-      "type": "create_task|create_collab|update_status|send_draft|escalate|create_snapshot|notify",
+      "type": "create_task|create_collab|update_status|send_draft|escalate|create_snapshot|notify|generate_solution_ppt|generate_tender_doc|generate_scene_render|parse_tender_document|extract_contract_risks|generate_quotation|generate_safety_proposal|generate_after_sales_report",
       "priority": 1-5,
       "requiresApproval": true|false,
       "executorCategory": "authorization|execution|collaboration",
       "payload": {
         "title": "动作标题",
         "description": "动作描述",
-        "draft": "如果是 send_draft，这里是草稿内容"
+        "draft": "如果是 send_draft，这里是草稿内容",
+        "topic": "如果是 generate_solution_ppt，这里是方案主题",
+        "tenderBrief": "如果是 generate_tender_doc，这里是投标需求摘要",
+        "requirements": "如果是 generate_scene_render，这里是效果图需求",
+        "content": "如果是 parse_tender_document，这里是招标文件内容",
+        "contractContent": "如果是 extract_contract_risks，这里是合同内容",
+        "customerName": "如果是 generate_quotation，这里是客户名称",
+        "products": "如果是 generate_quotation，这里是目标产品列表（数组或描述）",
+        "customerIndustry": "如果是 generate_safety_proposal，这里是客户行业（煤矿/电力/化工等）",
+        "sceneType": "如果是 generate_safety_proposal，这里是培训场景类型",
+        "traineeCount": "如果是 generate_safety_proposal，这里是预计培训人数",
+        "period": "如果是 generate_after_sales_report，这里是报告周期（如近3个月）"
       }
     }
   ]
@@ -193,7 +225,23 @@ const OUTPUT_SCHEMA = `
 executorCategory 说明（必须按此分类）：
 - authorization：涉及报价/合同/外部承诺/重大资源投入，必须人来决策，requiresApproval=true
 - execution：生成文档/草稿/内部任务/数据查询，AI可自动执行，requiresApproval=false
-- collaboration：需要人去行动（打电话/开会/谈判），AI负责准备弹药材料，requiresApproval=true`
+- collaboration：需要人去行动（打电话/开会/谈判），AI负责准备弹药材料，requiresApproval=true
+
+预置能力类型说明（执行类，AI自动完成，写入成果物）：
+- generate_solution_ppt：生成方案PPT slides[]，payload 需含 title 和 topic
+- generate_tender_doc：生成完整投标文件（含技术方案/报价/商务条款），payload 需含 title 和 tenderBrief
+- generate_scene_render：生成场地效果图描述，payload 需含 title 和 requirements
+- parse_tender_document：解析招标文件提取关键要求，payload 需含 content（文件文本）
+- extract_contract_risks：提取合同潜在风险点，payload 需含 contractContent
+- generate_quotation：生成结构化报价单（JSON格式，含行项目/合计/折扣），payload 需含 title 和 customerName，可选 products[]
+- generate_safety_proposal：生成完整安全培训方案（含VR场景/硬件/实施计划），payload 需含 title 和 customerIndustry，可选 sceneType、traineeCount
+- generate_after_sales_report：生成售后服务报告（含服务摘要/问题处理/续约建议），payload 需含 title，可选 period
+
+RPA文件生产工具（call_tool，需 RPA_SERVER_URL 已配置）：
+- toolId=rpa.create_pptx：将 deliverableId 对应的 PPT 大纲生产为真实 .pptx 文件，payload.toolInput 需含 deliverableId
+- toolId=rpa.create_docx：将投标文件/交接包内容生产为 .docx 文件，payload.toolInput 需含 deliverableId
+- toolId=rpa.create_xlsx：将报价单内容生产为 .xlsx 文件，payload.toolInput 需含 deliverableId
+- toolId=rpa.browse_login：浏览器登录查询，payload.toolInput 需含 targetSite 和 query`
 
 interface AgentRunInput {
   threadId: string
@@ -461,6 +509,11 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
          a.type === 'create_collab' ? 'collaboration' :
          a.requiresApproval ? 'authorization' : 'execution')
 
+      // 策略引擎：查策略表决定审批模式，覆盖 LLM 自行决定的 requiresApproval
+      const approvalMode = await resolveApprovalMode(a.type, category, input.agentType)
+      const needsApproval = requiresApprovalFromMode(approvalMode)
+      const initStatus = actionStatusFromApprovalMode(approvalMode)
+
       await db.insert(agentActions).values({
         id: actionId,
         runId,
@@ -468,13 +521,20 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
         actionType: a.type,
         actionPayloadJson: a.payload,
         actionPriority: a.priority,
-        executionMode: a.requiresApproval ? 'approval_required' : 'auto',
-        approvalRequired: a.requiresApproval,
-        actionStatus: a.requiresApproval ? 'pending_approval' : 'pending',
+        executionMode: approvalMode === 'auto' ? 'auto' : 'approval_required',
+        approvalRequired: needsApproval,
+        actionStatus: initStatus as 'pending' | 'pending_approval' | 'approved',
         executorCategory: category,
         dedupHash,
       })
-      savedActions.push({ ...a, id: actionId })
+
+      // auto 模式：策略允许自动执行，直接触发执行器（不等待人工）
+      if (approvalMode === 'auto') {
+        const { executeAction } = await import('@/lib/executor')
+        void executeAction(actionId)
+      }
+
+      savedActions.push({ ...a, id: actionId, requiresApproval: needsApproval })
     }
 
     // Record asset usage stats

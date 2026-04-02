@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { FlaskConical, Bot, Play, ChevronDown, ChevronRight, Clock, AlertTriangle, CheckCircle, Zap, Copy } from 'lucide-react'
+import { FlaskConical, Bot, Play, ChevronDown, ChevronRight, Clock, AlertTriangle, CheckCircle, Zap, Copy, Download, Wrench } from 'lucide-react'
 import { PageGuide } from '@/components/ui/page-guide'
 
 const AGENT_OPTIONS = [
@@ -82,6 +82,21 @@ export default function SandboxPage() {
   const [result, setResult] = useState<SandboxResult | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
+
+  // RPA 工具直接测试状态
+  const [rpaToolType, setRpaToolType] = useState<'create_pptx' | 'create_docx' | 'create_xlsx'>('create_pptx')
+  const [rpaRunning, setRpaRunning] = useState(false)
+  const [rpaResult, setRpaResult] = useState<{ fileUrl?: string; taskExecutionId?: string; error?: string } | null>(null)
+  const [rpaParams, setRpaParams] = useState(JSON.stringify({
+    title: '智慧工厂VR安全培训方案',
+    slides: [
+      { title: '项目背景', content: '工厂安全事故频发\n传统培训效果有限\n客户已发生2次事故' },
+      { title: '解决方案', content: 'VR沉浸式安全培训系统\n多场景事故预演\n实时数据追踪' },
+      { title: '产品演示', content: 'VR头盔+体感设备\n12个高危场景模拟\n支持200人并发培训' },
+      { title: '实施计划', content: '第1-4周：设备部署\n第5-8周：内容定制\n第9-12周：培训上线' },
+      { title: '投资回报', content: '培训效果提升60%\n事故率降低80%\n年节省成本约200万' },
+    ],
+  }, null, 2))
   const [copied, setCopied] = useState(false)
 
   const handleContextChange = (val: string) => {
@@ -325,6 +340,206 @@ export default function SandboxPage() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ══════════ RPA 工具直接测试 ══════════ */}
+      <div className="max-w-5xl mx-auto px-6 pb-12 mt-10">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-6 py-4 border-b border-gray-100 bg-gray-50">
+            <Wrench className="w-4 h-4 text-purple-600" />
+            <h2 className="text-sm font-semibold text-gray-800">RPA 工具直接测试</h2>
+            <span className="text-xs text-gray-400 ml-1">— 验收真实文件生成能力</span>
+          </div>
+          <div className="p-6 grid grid-cols-5 gap-6">
+            {/* 左：配置 */}
+            <div className="col-span-2 flex flex-col gap-4">
+              <div>
+                <label className="text-xs font-medium text-gray-500 mb-1 block">选择工具</label>
+                <select
+                  value={rpaToolType}
+                  onChange={e => {
+                    const t = e.target.value as typeof rpaToolType
+                    setRpaToolType(t)
+                    setRpaResult(null)
+                    if (t === 'create_pptx') {
+                      setRpaParams(JSON.stringify({
+                        title: '智慧工厂VR安全培训方案',
+                        slides: [
+                          { title: '项目背景', content: '工厂安全事故频发\n传统培训效果有限' },
+                          { title: '解决方案', content: 'VR沉浸式安全培训\n多场景事故预演' },
+                          { title: '投资回报', content: '培训效果提升60%\n事故率降低80%' },
+                        ],
+                      }, null, 2))
+                    } else if (t === 'create_docx') {
+                      setRpaParams(JSON.stringify({
+                        title: '项目投标技术方案',
+                        documentType: 'tender',
+                        sections: [
+                          { heading: '一、公司简介', body: '云艺化科技成立于2019年，专注于XR工业安全培训...' },
+                          { heading: '二、技术方案', body: '## 核心架构\n采用WebXR+本地渲染双引擎...\n- 支持HTC Vive Pro\n- 支持Meta Quest 3' },
+                          { heading: '三、实施计划', body: '**第一阶段（1-4周）**：需求调研与方案确认\n**第二阶段（5-8周）**：系统开发与场景制作' },
+                        ],
+                      }, null, 2))
+                    } else {
+                      setRpaParams(JSON.stringify({
+                        title: 'VR安全培训系统报价单',
+                        customerName: '大同煤矿集团',
+                        rows: [
+                          { product: 'VR安全培训主机', qty: 2, unit: '台', unitPrice: 68000, total: 136000, note: '含GPU主机+VR头盔' },
+                          { product: '安全场景内容包', qty: 1, unit: '套', unitPrice: 120000, total: 120000, note: '12个高危场景' },
+                          { product: '实施服务费', qty: 1, unit: '项', unitPrice: 30000, total: 30000, note: '含培训+售后1年' },
+                        ],
+                        subtotal: 286000,
+                        discountRate: 0.9,
+                        finalPrice: 257400,
+                        currency: '¥',
+                        validDays: 30,
+                        paymentTerms: '首付30%，验收付70%',
+                      }, null, 2))
+                    }
+                  }}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="create_pptx">生成 .pptx 方案演示</option>
+                  <option value="create_docx">生成 .docx 投标文件</option>
+                  <option value="create_xlsx">生成 .xlsx 报价单</option>
+                </select>
+              </div>
+
+              <div className="flex-1">
+                <label className="text-xs font-medium text-gray-500 mb-1 block">参数（JSON）</label>
+                <textarea
+                  value={rpaParams}
+                  onChange={e => setRpaParams(e.target.value)}
+                  className="w-full h-52 border border-gray-200 rounded-lg px-3 py-2.5 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <button
+                disabled={rpaRunning}
+                onClick={async () => {
+                  setRpaRunning(true)
+                  setRpaResult(null)
+                  try {
+                    let params: Record<string, unknown> = {}
+                    try { params = JSON.parse(rpaParams) } catch { setRpaResult({ error: 'JSON 格式错误' }); setRpaRunning(false); return }
+
+                    // 直接调用 /api/rpa-test（需要代理到 RPA 服务）
+                    const res = await fetch('/api/rpa-test', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ taskType: rpaToolType, taskParams: params }),
+                    })
+                    const json = await res.json() as { taskExecutionId?: string; fileUrl?: string; status?: string; error?: string }
+                    if (!res.ok || json.error) {
+                      setRpaResult({ error: json.error ?? `HTTP ${res.status}` })
+                    } else {
+                      // 轮询任务状态
+                      const taskId = json.taskExecutionId
+                      if (!taskId) { setRpaResult({ error: '未返回 taskExecutionId' }); setRpaRunning(false); return }
+                      const poll = setInterval(async () => {
+                        const statusRes = await fetch(`/api/rpa-test?taskId=${taskId}`)
+                        const statusJson = await statusRes.json() as { status?: string; outputFileUrl?: string; error?: string }
+                        if (statusJson.status === 'completed' && statusJson.outputFileUrl) {
+                          clearInterval(poll)
+                          setRpaResult({ fileUrl: statusJson.outputFileUrl, taskExecutionId: taskId })
+                          setRpaRunning(false)
+                        } else if (statusJson.status === 'failed') {
+                          clearInterval(poll)
+                          setRpaResult({ error: statusJson.error ?? '任务失败' })
+                          setRpaRunning(false)
+                        }
+                      }, 2000)
+                      setTimeout(() => { clearInterval(poll); if (rpaRunning) { setRpaResult({ error: '超时（60s），请检查 RPA 服务是否启动' }); setRpaRunning(false) } }, 60000)
+                    }
+                  } catch (e) {
+                    setRpaResult({ error: String(e) })
+                    setRpaRunning(false)
+                  }
+                }}
+                className="w-full py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {rpaRunning ? (
+                  <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />生成中…预计 5-10 秒</>
+                ) : (
+                  <><Play className="w-4 h-4" />运行 RPA</>
+                )}
+              </button>
+            </div>
+
+            {/* 右：结果 */}
+            <div className="col-span-3 flex flex-col gap-3">
+              <label className="text-xs font-medium text-gray-500">执行结果</label>
+
+              {!rpaResult && !rpaRunning && (
+                <div className="flex-1 flex items-center justify-center text-sm text-gray-400 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200 h-52">
+                  点击"运行 RPA"生成真实文件，然后打开验收排版质量
+                </div>
+              )}
+
+              {rpaRunning && (
+                <div className="flex-1 flex items-center justify-center bg-purple-50 rounded-xl border border-purple-100 h-52">
+                  <div className="text-center">
+                    <div className="w-10 h-10 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-3" />
+                    <p className="text-sm text-purple-700 font-medium">正在生成文件…</p>
+                    <p className="text-xs text-purple-500 mt-1">python-pptx / python-docx / openpyxl 处理中</p>
+                  </div>
+                </div>
+              )}
+
+              {rpaResult?.error && (
+                <div className="flex-1 bg-red-50 rounded-xl border border-red-200 p-5">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-red-700 mb-1">执行失败</p>
+                      <p className="text-xs text-red-600 font-mono">{rpaResult.error}</p>
+                      <div className="mt-3 text-xs text-red-500 space-y-1">
+                        <p>排查步骤：</p>
+                        <p>1. 确认 RPA 服务已启动：<code className="bg-red-100 px-1 rounded">cd rpa-agent-server && venv/bin/uvicorn main:app --port 8001</code></p>
+                        <p>2. 访问 <code className="bg-red-100 px-1 rounded">http://localhost:8001/health</code> 确认在线</p>
+                        <p>3. 确认 <code className="bg-red-100 px-1 rounded">.env.local</code> 中有 <code className="bg-red-100 px-1 rounded">RPA_SERVER_URL=http://localhost:8001</code></p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {rpaResult?.fileUrl && (
+                <div className="flex-1 bg-green-50 rounded-xl border border-green-200 p-5">
+                  <div className="flex items-start gap-2 mb-4">
+                    <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-semibold text-green-700">✅ 文件生成成功！</p>
+                      <p className="text-xs text-green-600 mt-0.5">任务 ID：{rpaResult.taskExecutionId}</p>
+                    </div>
+                  </div>
+                  <a
+                    href={rpaResult.fileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 w-full py-3 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 justify-center"
+                  >
+                    <Download className="w-4 h-4" />
+                    点击下载文件验收
+                  </a>
+                  <p className="text-xs text-green-600 mt-2 text-center">用 WPS / Office 打开，检查排版和内容质量</p>
+                </div>
+              )}
+
+              <div className="mt-auto bg-blue-50 rounded-lg p-3 text-xs text-blue-700">
+                <p className="font-medium mb-1">💡 如何使用这个测试区：</p>
+                <ol className="space-y-1 list-decimal list-inside text-blue-600">
+                  <li>先在左侧修改参数（标题、内容等）</li>
+                  <li>点击"运行 RPA"，等待文件生成</li>
+                  <li>下载文件，用 WPS/Office 打开验收</li>
+                  <li>如果排版不满意，修改 <code className="bg-blue-100 px-1 rounded">rpa-agent-server/tasks/create_pptx.py</code> 中的样式代码</li>
+                  <li>满意后，Agent 生成成果物→批准→点"生成文件"即走同一条路径</li>
+                </ol>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

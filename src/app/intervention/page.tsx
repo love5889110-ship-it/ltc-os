@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { UserCheck, CheckCircle, XCircle, MessageSquare, RefreshCw, Edit3, Sparkles, TrendingUp, ThumbsUp, MessageCircle, ChevronDown } from 'lucide-react'
-import { ACTION_TYPE_LABELS, AGENT_LABELS, statusColor, formatRelativeTime } from '@/lib/utils'
+import { UserCheck, CheckCircle, XCircle, MessageSquare, RefreshCw, Edit3, Sparkles, TrendingUp, ThumbsUp, MessageCircle } from 'lucide-react'
+import { ACTION_TYPE_LABELS, statusColor, formatRelativeTime } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 
@@ -146,6 +146,12 @@ export default function InterventionPage() {
   ]
 
   const pendingCount = actions.filter((a) => a.actionStatus === 'pending_approval').length
+
+  // 按 executorCategory 聚合
+  const categoryGroups = ['authorization', 'execution', 'collaboration'].map((cat) => {
+    const items = actions.filter((a) => (a.executorCategory ?? 'execution') === cat)
+    return { cat, count: items.length }
+  }).filter((g) => g.count > 0)
 
   // 分类标签
   const catLabel = (cat: string | null) =>
@@ -293,6 +299,18 @@ export default function InterventionPage() {
           </button>
         ))}
       </div>
+
+      {/* 分类聚合概览 — 仅在有数据时展示 */}
+      {!loading && categoryGroups.length > 0 && (
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {categoryGroups.map(({ cat, count }) => (
+            <div key={cat} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${catStyle(cat)}`}>
+              <span>{catLabel(cat)}</span>
+              <span className="bg-white/60 px-1.5 py-0.5 rounded-full font-semibold">{count}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-16 text-gray-400 text-sm">加载中...</div>

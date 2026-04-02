@@ -113,3 +113,55 @@ export function triggerSignalAgent(
     }
   })()
 }
+
+/**
+ * 动作执行完成后，根据动作类型决定是否触发下一个 Agent（execution_callback 链路）
+ * - update_status: 阶段变更类动作，触发新阶段对应的 Agent
+ * - create_task / send_draft / escalate: 触发 coordinator 做跟进确认
+ */
+export function triggerExecutionCallback(
+  workspaceId: string,
+  actionType: string,
+  result: Record<string, unknown>,
+  runId?: string
+): void {
+  ;(async () => {
+    try {
+      // update_status 且有阶段变更 → 触发新阶段 Agent
+      if (actionType === 'update_status' && result.updates) {
+        const updates = result.updates as Record<string, unknown>
+        if (updates.currentStage) {
+          const newStage = updates.currentStage as string
+          const { opportunityWorkspaces, opportunities, customers } = await import('@/db/schema')
+          const { db } = await import('@/db')
+          const { eq } = await import('drizzle-orm')
+          const ws = await db.query.opportunityWorkspaces.findFirst({ where: eq(opportunityWorkspaces.id, workspaceId) })
+          const opp = ws ? await db.query.opportunities.findFirst({ where: eq(opportunities.id, ws.opportunityId) }) : null
+          const customer = opp ? await db.query.customers.findFirst({ where: eq(customers.id, opp.customerId) }) : null
+          triggerStageAgents(workspaceId, newStage, {
+            opportunity: opp ? { name: opp.name, stage: newStage } : undefined,
+            customer: customer ? { name: customer.name } : undefined,
+            currentStage: newStage,
+          })
+          return
+        }
+      }
+
+      // escalate → 触发 coordinator 紧急响应
+      if (actionType === 'escalate') {
+        const threadId = await createOrGetThread(workspaceId, 'coordinator')
+        await runAgent({
+          threadId,
+          workspaceId,
+          agentType: 'coordinator',
+          triggerType: 'execution_callback',
+          context: {
+            additionalContext: `上一个动作（escalate）已执行完毕，结果：${JSON.stringify(result)}。请重新评估当前风险并决定下一步行动。`,
+          },
+        })
+      }
+    } catch (err) {
+      console.error(`[stage-engine] execution_callback failed for workspace ${workspaceId} actionType ${actionType}:`, err)
+    }
+  })()
+}

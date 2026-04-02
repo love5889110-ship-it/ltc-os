@@ -49,11 +49,9 @@ export const SIGNAL_STATUS_LABELS: Record<string, string> = {
 
 export const AGENT_LABELS: Record<string, string> = {
   coordinator: '销售总控 Agent',
-  sales_copilot: '销售 Agent',
   sales: '销售 Agent',
   presales_assistant: '解决方案 Agent',
   tender_assistant: '招标 Agent',
-  commercial: '商务 Agent',
   handover: '交付 Agent',
   service_triage: '服务 Agent',
   asset_governance: '资产管理 Agent',
@@ -68,6 +66,15 @@ export const ACTION_TYPE_LABELS: Record<string, string> = {
   create_snapshot: '生成快照',
   notify: '发送通知',
   call_tool: '调用工具',
+  // 预置能力类型
+  generate_solution_ppt: '生成方案PPT',
+  generate_scene_render: '生成场地效果图',
+  generate_tender_doc: '生成投标文件',
+  parse_tender_document: '解析招标文件',
+  extract_contract_risks: '提取合同风险',
+  generate_quotation: '生成报价单',
+  generate_safety_proposal: '生成安全培训方案',
+  generate_after_sales_report: '生成售后报告',
 }
 
 export const SIGNAL_SOURCE_LABELS: Record<string, string> = {

@@ -3,6 +3,13 @@ import { db } from '@/db'
 import { agentRules } from '@/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
 import { generateId } from '@/lib/utils'
+import { createHash } from 'crypto'
+
+/** 语义去重 hash：agentType + ruleType + condition(前50字) + instruction(前50字) */
+function ruleDedupeHash(agentType: string, ruleType: string, condition: string, instruction: string): string {
+  const key = `${agentType}|${ruleType}|${condition.slice(0, 50).toLowerCase().trim()}|${instruction.slice(0, 50).toLowerCase().trim()}`
+  return createHash('md5').update(key).digest('hex').slice(0, 16)
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -28,6 +35,19 @@ export async function POST(req: NextRequest) {
 
   if (!agentType || !ruleType || !condition || !instruction) {
     return NextResponse.json({ error: '缺少必要字段' }, { status: 400 })
+  }
+
+  // 语义去重：相似规则直接返回已有规则 ID
+  const dedupe = ruleDedupeHash(agentType, ruleType, condition, instruction)
+  const allRules = await db.query.agentRules.findMany({
+    where: (r, { and, eq }) => and(eq(r.agentType, agentType as any), eq(r.enabled, true)),
+  })
+  const similar = allRules.find((r) => {
+    const existingHash = ruleDedupeHash(r.agentType, r.ruleType, r.condition, r.instruction)
+    return existingHash === dedupe
+  })
+  if (similar) {
+    return NextResponse.json({ id: similar.id, duplicate: true, message: '已存在语义相似的规则，已返回原规则' })
   }
 
   const id = generateId()

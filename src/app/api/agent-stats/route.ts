@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/db'
-import { feedbackSamples } from '@/db/schema'
+import { feedbackSamples, executionLogs, agentActions } from '@/db/schema'
 import { sql, and, eq, gte } from 'drizzle-orm'
 import { AGENT_LABELS } from '@/lib/utils'
 import type { AgentType } from '@/types'
@@ -75,6 +75,32 @@ export async function GET(req: NextRequest) {
         limit: 3,
       })
 
+      // Execution success rate from executionLogs (via agentActions → agentRuns → agentThreads)
+      const execRows = await db
+        .select({
+          total: sql<number>`count(*)::int`,
+          completed: sql<number>`count(*) filter (where ${executionLogs.executionStatus} = 'completed')::int`,
+          failed: sql<number>`count(*) filter (where ${executionLogs.executionStatus} = 'failed')::int`,
+        })
+        .from(executionLogs)
+        .innerJoin(agentActions, eq(executionLogs.actionId, agentActions.id))
+        .where(
+          and(
+            sql`exists (
+              select 1 from agent_runs ar
+              inner join agent_threads at2 on at2.id = ar.thread_id
+              where ar.id = ${agentActions.runId}
+              and at2.agent_type = ${agentType}
+            )`,
+            gte(executionLogs.executedAt, since28days),
+          )
+        )
+
+      const execTotal = execRows[0]?.total ?? 0
+      const execCompleted = execRows[0]?.completed ?? 0
+      const execFailed = execRows[0]?.failed ?? 0
+      const executionSuccessRate = execTotal > 0 ? Math.round((execCompleted / execTotal) * 100) : null
+
       return {
         agentType,
         agentLabel: (AGENT_LABELS as Record<string, string>)[agentType] ?? agentType,
@@ -98,6 +124,10 @@ export async function GET(req: NextRequest) {
           original: JSON.stringify(s.originalOutputJson ?? {}).slice(0, 200),
           corrected: JSON.stringify(s.correctedOutputJson ?? {}).slice(0, 200),
         })),
+        executionSuccessRate,
+        executionTotal: execTotal,
+        executionCompleted: execCompleted,
+        executionFailed: execFailed,
       }
     })
   )

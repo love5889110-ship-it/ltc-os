@@ -47,6 +47,10 @@ export const runStatusEnum = pgEnum('run_status', [
 export const actionTypeEnum = pgEnum('action_type', [
   'create_task', 'create_collab', 'update_status', 'send_draft',
   'escalate', 'create_snapshot', 'notify', 'call_tool',
+  // 预置能力类型（AI内容生成）
+  'generate_solution_ppt', 'generate_scene_render', 'generate_tender_doc',
+  'parse_tender_document', 'extract_contract_risks',
+  'generate_quotation', 'generate_safety_proposal', 'generate_after_sales_report',
 ])
 
 export const executionModeEnum = pgEnum('execution_mode', [
@@ -276,6 +280,8 @@ export const humanInterventions = pgTable('human_interventions', {
 export const executionLogs = pgTable('execution_logs', {
   id: text('id').primaryKey(),
   actionId: text('action_id').notNull().references(() => agentActions.id),
+  runId: text('run_id').references(() => agentRuns.id),           // 溯源：来自哪个 Agent Run
+  signalId: text('signal_id').references(() => signalEvents.id), // 溯源：来自哪个信号
   executorType: text('executor_type').notNull(),
   requestPayloadJson: jsonb('request_payload_json').default({}),
   responsePayloadJson: jsonb('response_payload_json').default({}),
@@ -503,4 +509,116 @@ export const skillTemplates = pgTable('skill_templates', {
   createdAt: timestamp('created_at').defaultNow(),
 })
 
+// ── 动作审批策略矩阵 ─────────────────────────────────────────────────────────
+// 定义每类动作的审批要求：自动执行 / 单人审批 / 双人审批
+// 优先级：agentType + actionType 精确匹配 > actionType 全局匹配 > 兜底默认
 
+export const agentActionPolicies = pgTable('agent_action_policies', {
+  id: text('id').primaryKey(),
+  // 匹配条件（null = 通配）
+  agentType: agentTypeEnum('agent_type'),           // null = 适用所有 Agent
+  actionType: actionTypeEnum('action_type'),        // null = 适用所有动作类型
+  executorCategory: text('executor_category'),      // null = 适用所有分类
+  // 审批要求
+  approvalMode: text('approval_mode').notNull().default('approval_required'),
+  // 'auto'              — 自动执行，无需审批
+  // 'approval_required' — 需要单人审批
+  // 'dual_approval'     — 需要双人审批（高风险动作）
+  // 附加约束
+  requiresWhitelist: boolean('requires_whitelist').notNull().default(false), // 收件人必须在白名单内
+  maxRetries: integer('max_retries').notNull().default(3),
+  timeoutSeconds: integer('timeout_seconds').notNull().default(30),
+  // 元数据
+  description: text('description'),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+// ── 成果物（Deliverables）─────────────────────────────────────────────────────
+// 所有 Agent 产出的成果物统一归属地：PPT/效果图/方案/标书/合同意见/交接包等
+// 状态机：drafting → pending_review → approved → sent → archived
+
+export const deliverableStatusEnum = pgEnum('deliverable_status', [
+  'drafting', 'pending_review', 'approved', 'sent', 'archived',
+])
+
+export const deliverableTypeEnum = pgEnum('deliverable_type', [
+  'solution_ppt',          // 方案 PPT
+  'scene_render',          // 场地效果图
+  'layout_plan',           // 平面图方案
+  'safety_proposal',       // 安全专业方案
+  'requirement_summary',   // 需求摘要
+  'bid_package',           // 标书草稿/定稿
+  'bid_prelim',            // 标前立项文件
+  'contract_review',       // 合同审查意见
+  'handover_package',      // 交接包
+  'acceptance_doc',        // 验收材料
+  'after_sales_report',    // 售后建议材料
+  'quotation',             // 报价单
+  'other',                 // 其他
+])
+
+export const deliverables = pgTable('deliverables', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => opportunityWorkspaces.id),
+  sourceActionId: text('source_action_id').references(() => agentActions.id),
+  type: deliverableTypeEnum('type').notNull(),
+  stage: text('stage'),                              // 产出时所在商机阶段
+  title: text('title').notNull(),
+  status: deliverableStatusEnum('status').notNull().default('drafting'),
+  approvalStatus: text('approval_status'),           // null=未提审, approved, rejected
+  version: integer('version').notNull().default(1),
+  audience: text('audience'),                        // 受众：internal/customer/partner
+  fileUrl: text('file_url'),                         // 文件存储 URL（未来接 OSS）
+  previewUrl: text('preview_url'),                   // 预览 URL
+  content: text('content'),                          // 正文内容（Markdown/JSON）
+  metadata: jsonb('metadata').default({}),           // 扩展字段（slides结构/章节等）
+  createdBy: text('created_by'),                     // 'agent' 或人工姓名
+  approvedBy: text('approved_by'),
+  supersedesId: text('supersedes_id'),               // 指向被替换的历史版本
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+// ── 风险事件（RiskEvents）────────────────────────────────────────────────────
+// 全过程结构化风险，可追踪处置状态
+// 状态机：detected → acknowledged → mitigated / escalated → closed
+
+export const riskCategoryEnum = pgEnum('risk_category', [
+  'requirement_unclear',   // 需求不清风险
+  'competitor',            // 竞品风险
+  'decision_chain',        // 决策链风险
+  'budget',                // 预算风险
+  'compliance',            // 安全专业与合规风险
+  'bid_qualification',     // 投标资格风险
+  'pricing_margin',        // 报价与毛利风险
+  'contract_terms',        // 合同条款风险
+  'delivery_scope',        // 交付范围膨胀风险
+  'customer_health',       // 客户健康与售后风险
+])
+
+export const riskLevelEnum = pgEnum('risk_level', ['low', 'medium', 'high', 'critical'])
+
+export const riskStatusEnum = pgEnum('risk_status', [
+  'detected', 'acknowledged', 'mitigated', 'escalated', 'closed',
+])
+
+export const riskEvents = pgTable('risk_events', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => opportunityWorkspaces.id),
+  sourceSignalId: text('source_signal_id').references(() => signalEvents.id),
+  sourceActionId: text('source_action_id').references(() => agentActions.id),
+  riskCategory: riskCategoryEnum('risk_category').notNull(),
+  riskLevel: riskLevelEnum('risk_level').notNull().default('medium'),
+  title: text('title').notNull(),
+  description: text('description'),
+  triggerEvidence: text('trigger_evidence'),         // 触发依据（原文摘录）
+  status: riskStatusEnum('status').notNull().default('detected'),
+  recommendedAction: text('recommended_action'),     // 系统建议处置动作
+  acknowledgedBy: text('acknowledged_by'),
+  mitigatedAt: timestamp('mitigated_at'),
+  closedAt: timestamp('closed_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
