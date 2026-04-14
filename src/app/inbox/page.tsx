@@ -51,7 +51,7 @@ export default function InboxPage() {
   const [showIngest, setShowIngest] = useState(false)
   const [showIngestDropdown, setShowIngestDropdown] = useState(false)
   const [ingestText, setIngestText] = useState('')
-  const [ingestSource, setIngestSource] = useState('get_note')
+  const [ingestSource, setIngestSource] = useState('manual')
   const [ingesting, setIngesting] = useState(false)
   const [confirmingSignal, setConfirmingSignal] = useState<Signal | null>(null)
   const [allOpportunities, setAllOpportunities] = useState<{ id: string; name: string }[]>([])
@@ -70,14 +70,6 @@ export default function InboxPage() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [syncing, setSyncing] = useState(false)
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
-  const [autoSync, setAutoSync] = useState(false)
-  const [autoSyncInterval, setAutoSyncInterval] = useState(30)
-  const [autoSyncSaving, setAutoSyncSaving] = useState(false)
-  const [autoSyncSaved, setAutoSyncSaved] = useState(false)
-  const [showSyncPanel, setShowSyncPanel] = useState(false)
-  const [syncKeyword, setSyncKeyword] = useState('')
-  const [syncResult, setSyncResult] = useState<{ synced: number; skipped: number } | null>(null)
   const [ignoringSignalId, setIgnoringSignalId] = useState<string | null>(null)
   const [ignoreReason, setIgnoreReason] = useState('')
   const [confirmedWorkspaceId, setConfirmedWorkspaceId] = useState<string | null>(null)
@@ -96,51 +88,7 @@ export default function InboxPage() {
     setLoading(false)
   }, [statusFilter, typeFilter])
 
-  const loadLastSync = useCallback(async () => {
-    const res = await fetch('/api/connectors/get-note/sync')
-    const data = await res.json()
-    if (data.lastSyncAt) setLastSyncAt(data.lastSyncAt)
-    // Also load auto-sync settings
-    const sRes = await fetch('/api/settings')
-    const sData = await sRes.json()
-    if (sData.getNoteAutoSync !== undefined) setAutoSync(sData.getNoteAutoSync)
-    if (sData.getNoteAutoSyncInterval) setAutoSyncInterval(sData.getNoteAutoSyncInterval)
-  }, [])
-
-  useEffect(() => { load(); loadLastSync() }, [load, loadLastSync])
-
-  const handleSyncGetNote = async (keyword?: string) => {
-    setSyncing(true)
-    setSyncResult(null)
-    try {
-      const res = await fetch('/api/connectors/get-note/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: keyword?.trim() || undefined }),
-      })
-      const data = await res.json()
-      if (data.success) {
-        setSyncResult({ synced: data.synced, skipped: data.skipped })
-      }
-      await load()
-      await loadLastSync()
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  const handleSaveAutoSync = async () => {
-    setAutoSyncSaving(true)
-    setAutoSyncSaved(false)
-    await fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ getNoteAutoSync: autoSync, getNoteAutoSyncInterval: autoSyncInterval }),
-    })
-    setAutoSyncSaving(false)
-    setAutoSyncSaved(true)
-    setTimeout(() => setAutoSyncSaved(false), 3000)
-  }
+  useEffect(() => { load() }, [load])
 
   const handleConfirm = async (signalId: string, opportunityId?: string) => {
     await fetch(`/api/signals/${signalId}`, {
@@ -347,14 +295,9 @@ export default function InboxPage() {
               <Plug className="w-3.5 h-3.5" />
               连接器
             </button>
-            {lastSyncAt && (
-              <span className="text-xs text-gray-400">
-                同步于 {formatRelativeTime(lastSyncAt)}
-              </span>
-            )}
             <div className="relative">
               <button
-                onClick={() => { setShowIngestDropdown(v => !v); setShowSyncPanel(false) }}
+                onClick={() => setShowIngestDropdown(v => !v)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
               >
                 <Plus className="w-4 h-4" />
@@ -365,13 +308,6 @@ export default function InboxPage() {
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowIngestDropdown(false)} />
                   <div className="absolute right-0 top-10 z-20 bg-white border rounded-xl shadow-lg w-44 overflow-hidden">
-                    <button
-                      onClick={() => { setShowIngestDropdown(false); setSyncResult(null); setShowSyncPanel(true) }}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 text-gray-400 ${syncing ? 'animate-spin' : ''}`} />
-                      {syncing ? '同步中...' : '同步笔记'}
-                    </button>
                     <button
                       onClick={() => { setShowIngestDropdown(false); setShowUpload(true); setUploadFile(null); setUploadResult(null); setUploadError(null) }}
                       className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
@@ -387,7 +323,6 @@ export default function InboxPage() {
                       手动录入
                     </button>
                     <div className="border-t my-1" />
-                    {/* [P1-11] Expose DingTalk / WeCom webhook entry points */}
                     <a
                       href="/settings"
                       onClick={() => setShowIngestDropdown(false)}
@@ -400,85 +335,6 @@ export default function InboxPage() {
                 </>
               )}
             </div>
-            {showSyncPanel && !syncing && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setShowSyncPanel(false)} />
-                <div className="absolute right-4 top-16 z-20 bg-white border rounded-xl shadow-lg w-72 p-4">
-                  <p className="text-xs font-medium text-gray-700 mb-1">同步数据来源</p>
-                  <p className="text-[11px] text-gray-400 mb-3">当前已接入：<span className="text-blue-600 font-medium">Get 笔记</span>（微信/钉钉/录音将在接入后自动同步）</p>
-
-                  <div className="space-y-2 mb-3">
-                    <p className="text-[11px] text-gray-500 font-medium">Get 笔记</p>
-                    <button
-                      onClick={() => { setShowSyncPanel(false); handleSyncGetNote() }}
-                      className="w-full text-left px-3 py-2 rounded-lg border hover:bg-blue-50 hover:border-blue-300 transition-colors"
-                    >
-                      <p className="text-xs font-medium text-gray-800">增量同步（默认）</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">只拉取上次同步后的新笔记</p>
-                    </button>
-                    <div className="border rounded-lg p-3 space-y-2">
-                      <p className="text-xs font-medium text-gray-800">按关键词搜索</p>
-                      <p className="text-[11px] text-gray-400">扫描全部历史笔记，找出匹配的</p>
-                      <input
-                        type="text"
-                        value={syncKeyword}
-                        onChange={(e) => setSyncKeyword(e.target.value)}
-                        placeholder="如：阳光电源、中石化..."
-                        className="w-full border rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        onKeyDown={(e) => { if (e.key === 'Enter' && syncKeyword.trim()) { setShowSyncPanel(false); handleSyncGetNote(syncKeyword) } }}
-                      />
-                      <button
-                        onClick={() => { if (syncKeyword.trim()) { setShowSyncPanel(false); handleSyncGetNote(syncKeyword) } }}
-                        disabled={!syncKeyword.trim()}
-                        className="w-full py-1.5 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-40"
-                      >
-                        搜索并导入
-                      </button>
-                    </div>
-                  </div>
-
-                  {syncResult && (
-                    <div className="text-xs bg-green-50 border border-green-200 rounded px-2.5 py-2 text-green-700">
-                      新增 <strong>{syncResult.synced}</strong> 条，跳过 {syncResult.skipped} 条
-                    </div>
-                  )}
-
-                  {lastSyncAt && (
-                    <p className="text-[11px] text-gray-400 mt-2">上次同步：{formatRelativeTime(lastSyncAt)}</p>
-                  )}
-
-                  <div className="mt-3 pt-3 border-t">
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <p className="text-xs font-medium text-gray-700">后台自动同步</p>
-                        <p className="text-[11px] text-gray-400">定时拉取，无需手动操作</p>
-                      </div>
-                      <button
-                        onClick={() => setAutoSync(v => !v)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${autoSync ? 'bg-blue-600' : 'bg-gray-300'}`}
-                      >
-                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${autoSync ? 'translate-x-4' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
-                    {autoSync && (
-                      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                        <span className="text-[11px] text-gray-500">每</span>
-                        {[15, 30, 60].map((m) => (
-                          <button key={m} onClick={() => setAutoSyncInterval(m)}
-                            className={`px-2 py-0.5 rounded text-[11px] border transition-all ${autoSyncInterval === m ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500'}`}>
-                            {m >= 60 ? '1小时' : `${m}分钟`}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <button onClick={handleSaveAutoSync} disabled={autoSyncSaving}
-                      className="w-full py-1.5 border rounded text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                      {autoSyncSaving ? '保存中...' : autoSyncSaved ? '✓ 已保存' : '保存设置'}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
           </div>
         </div>
 
@@ -1160,7 +1016,6 @@ export default function InboxPage() {
                 onChange={(e) => setIngestSource(e.target.value)}
                 className="w-full border rounded-lg px-3 py-2 text-sm"
               >
-                <option value="get_note">Get 笔记</option>
                 <option value="recording">录音转写</option>
                 <option value="dingtalk">钉钉</option>
                 <option value="file_ocr">文件/OCR</option>

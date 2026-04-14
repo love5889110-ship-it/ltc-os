@@ -17,7 +17,6 @@ interface Connector {
 }
 
 const CONNECTOR_META: Record<string, { label: string; description: string }> = {
-  get_note: { label: 'Get 笔记', description: '自动同步录音转写笔记为信号' },
   dingtalk: { label: '钉钉', description: '监听指定钉钉群消息，自动转化为销售信号' },
   wecom: { label: '企业微信', description: '接收企业微信应用消息或群机器人推送' },
   recording: { label: '录音转写', description: '上传录音文件，AI 自动转写为信号' },
@@ -36,10 +35,6 @@ function SettingsPageInner() {
   // Connector state
   const [connectors, setConnectors] = useState<Connector[]>([])
   const [loading, setLoading] = useState(true)
-  const [configuring, setConfiguring] = useState<string | null>(null)
-  const [apiKey, setApiKey] = useState('')
-  const [clientId, setClientId] = useState('')
-  const [saving, setSaving] = useState(false)
 
   // DingTalk config state
   const [dtAppKey, setDtAppKey] = useState('')
@@ -174,24 +169,6 @@ function SettingsPageInner() {
     setTimeout(() => setWcSaved(false), 3000)
   }
 
-  const handleSaveGetNote = async () => {
-    if (!apiKey.trim() || !clientId.trim()) return
-    setSaving(true)
-    const res = await fetch('/api/connectors/get-note/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: apiKey.trim(), clientId: clientId.trim() }),
-    })
-    const data = await res.json()
-    setSaving(false)
-    if (data.success) {
-      setConfiguring(null)
-      setApiKey('')
-      setClientId('')
-      loadConnectors()
-    }
-  }
-
   const handleSaveLlm = async () => {
     setLlmSaving(true)
     setLlmSaved(false)
@@ -269,86 +246,6 @@ function SettingsPageInner() {
             <div className="text-center py-16 text-gray-400 text-sm">加载中...</div>
           ) : (
             <>
-              {/* 已接入 */}
-              {connectors.filter(c => c.connectorType === 'get_note').length > 0 && (
-                <div className="mb-6">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">已接入</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {connectors.filter(c => c.connectorType === 'get_note').map((connector) => {
-                      const isGetNote = connector.connectorType === 'get_note'
-                      return (
-                        <div key={connector.id} className="bg-white rounded-xl border p-5">
-                          <div className="flex items-start justify-between mb-3">
-                            <div>
-                              <p className="font-medium text-sm">{CONNECTOR_META[connector.connectorType]?.label ?? connector.connectorName}</p>
-                              {connector.connectorName && connector.connectorName !== CONNECTOR_META[connector.connectorType]?.label && (
-                                <p className="text-xs text-gray-400 mt-0.5">{connector.connectorName}</p>
-                              )}
-                              <p className="text-xs text-gray-400 mt-0.5">{CONNECTOR_META[connector.connectorType]?.description}</p>
-                            </div>
-                            <HealthIcon status={connector.healthStatus} />
-                          </div>
-
-                          <div className="flex items-center gap-2 mb-3">
-                            <AuthBadge status={connector.authStatus} />
-                          </div>
-
-                          {connector.lastSyncAt && (
-                            <p className="text-xs text-gray-400 flex items-center gap-1 mb-3">
-                              <RefreshCw className="w-3 h-3" />
-                              上次同步: {new Date(connector.lastSyncAt).toLocaleString('zh-CN')}
-                            </p>
-                          )}
-
-                          {/* Get笔记：重新配置 + 自动同步 */}
-                          {isGetNote && (
-                            <>
-                              {configuring === 'get_note' && (
-                                <div className="mb-3 space-y-2">
-                                  <input
-                                    type="text" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-                                    placeholder="API Key (gk_live_...)"
-                                    className="w-full border rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                                  />
-                                  <input
-                                    type="text" value={clientId} onChange={(e) => setClientId(e.target.value)}
-                                    placeholder="Client ID (cli_...)"
-                                    className="w-full border rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                                  />
-                                  <div className="flex gap-2">
-                                    <button onClick={handleSaveGetNote} disabled={saving || !apiKey.trim() || !clientId.trim()}
-                                      className="flex-1 py-1.5 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50">
-                                      {saving ? '保存中...' : '保存'}
-                                    </button>
-                                    <button onClick={() => setConfiguring(null)} className="px-3 py-1.5 border rounded text-xs text-gray-600">取消</button>
-                                  </div>
-                                </div>
-                              )}
-
-                              <div className="pt-3 border-t space-y-3">
-                                <button
-                                  onClick={() => setConfiguring(configuring === 'get_note' ? null : 'get_note')}
-                                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                                >
-                                  <Settings className="w-3 h-3" />
-                                  {connector.authStatus === 'authorized' ? '重新配置密钥' : '配置密钥'}
-                                </button>
-
-                                {connector.authStatus === 'authorized' && (
-                                  <p className="text-[11px] text-gray-400">
-                                    定时自动同步设置在 <span className="text-blue-500">信号台 → 同步笔记</span> 中配置
-                                  </p>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
               {/* 即将上线 */}
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">即将上线</p>
