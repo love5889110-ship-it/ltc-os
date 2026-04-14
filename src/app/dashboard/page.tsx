@@ -25,6 +25,14 @@ interface DashboardData {
   agentEffectiveness: Array<{ agentType: string; agentLabel: string; totalRuns: number; acceptRate: number; correctedCount: number }>
 }
 
+interface WorkspaceListItem {
+  workspace: { id: string; healthScore: number; riskScore: number }
+  opportunity: { name: string } | null
+  pendingActionCount: number
+  agentStatuses: Array<{ agentType: string; status: string; lastActiveAt: string | null }>
+  aiSummary: { outputSummary: string | null; agentType: string; startedAt: string | null } | null
+}
+
 interface SignalItem {
   id: string
   signalType: string
@@ -39,16 +47,15 @@ type ViewMode = 'control' | 'scene'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────
 
-const TICKER_ITEMS = [
-  '总控 Agent · 分析「大同煤矿」招标信号',
-  '方案 Agent · 生成解决方案文档',
-  '销售 Agent · 更新「阳光电源」健康分',
-  '招标 Agent · 生成投标响应文件',
-  '总控 Agent · 触发「中建三局」投标流程',
-  '规则引擎 · 注入 12 条经营规则',
-  '交付 Agent · 创建项目交付任务',
-  '销售 Agent · 发送客户关怀草稿',
-]
+const AGENT_TYPE_LABELS: Record<string, string> = {
+  coordinator: '总控',
+  sales: '销售',
+  presales_assistant: '方案',
+  tender_assistant: '招标',
+  handover: '交付',
+  service_triage: '服务',
+  asset_governance: '资产',
+}
 
 // 总控 Agent（决策层：分析判断、分配任务）
 const COORDINATOR_NODE = { label: '总控 Agent', color: '#6366f1', hex: 'indigo' }
@@ -102,8 +109,7 @@ export default function DashboardPage() {
   const [skillCount, setSkillCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<ViewMode>('control')
-  const [tickerIdx, setTickerIdx] = useState(0)
-  const [agentPulseIdx, setAgentPulseIdx] = useState(0)
+  const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([])
   const [battleOpen, setBattleOpen] = useState(true)
   const [quickOpen, setQuickOpen] = useState(false)
   const [quickType, setQuickType] = useState('demand')
@@ -114,19 +120,21 @@ export default function DashboardPage() {
   // ── 数据加载 ───────────────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
-    const [dashRes, sigRes, assetRes, skillRes, actRes] = await Promise.all([
+    const [dashRes, sigRes, assetRes, skillRes, actRes, wsRes] = await Promise.all([
       fetch('/api/dashboard'), fetch('/api/signals'),
       fetch('/api/assets'), fetch('/api/skill-templates'),
       fetch('/api/actions?limit=6'),
+      fetch('/api/workspaces'),
     ])
-    const [d, s, a, sk, act] = await Promise.all([
-      dashRes.json(), sigRes.json(), assetRes.json(), skillRes.json(), actRes.json(),
+    const [d, s, a, sk, act, ws] = await Promise.all([
+      dashRes.json(), sigRes.json(), assetRes.json(), skillRes.json(), actRes.json(), wsRes.json(),
     ])
     setData(d)
     setSignals(Array.isArray(s.signals) ? s.signals : [])
     setAssetCount(Array.isArray(a.assets) ? a.assets.length : 0)
     setSkillCount(Array.isArray(sk.templates) ? sk.templates.filter((t: SkillTemplate) => t.enabled).length : 0)
     setRecentActions(Array.isArray(act.actions) ? act.actions.slice(0, 6) : [])
+    setWorkspaces(Array.isArray(ws.workspaces) ? ws.workspaces : [])
     setLoading(false)
   }, [])
 
@@ -136,20 +144,6 @@ export default function DashboardPage() {
     return () => clearInterval(timer)
   }, [loadData])
 
-  // ── ticker 动画 ─────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const t = setInterval(() => setTickerIdx(i => (i + 1) % TICKER_ITEMS.length), 3200)
-    return () => clearInterval(t)
-  }, [])
-
-  // ── Agent 脉冲轮换 ─────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const t = setInterval(() => setAgentPulseIdx(i => (i + 1) % ALL_AGENT_NODES.length), 1800)
-    return () => clearInterval(t)
-  }, [])
-
   // ─── 派生数据 ──────────────────────────────────────────────────────────────
 
   const boundSignals = signals.filter(s => s.binding)
@@ -158,6 +152,30 @@ export default function DashboardPage() {
   const completedActions = data?.actionsByStatus['completed'] ?? 0
   const totalFeedback = data ? Object.values(data.feedbackByLabel).reduce((a: number, b: unknown) => a + (b as number), 0) : 0
   const correctedCount = data ? (data.feedbackByLabel['modified'] ?? 0) + (data.feedbackByLabel['rejected'] ?? 0) : 0
+
+  // 真实运行中的 Agent（从 workspaces 汇总）
+  const runningAgentTypes = new Set<string>()
+  for (const ws of workspaces) {
+    for (const s of ws.agentStatuses) {
+      if (s.status === 'running') runningAgentTypes.add(s.agentType)
+    }
+  }
+
+  // 当前有 Agent 运行的战场（最多显示3条）
+  const activeWorkspaces = workspaces
+    .filter(ws => ws.agentStatuses.some(s => s.status === 'running'))
+    .slice(0, 3)
+
+  // 今日需关注 Top3（riskScore 高 + pendingActionCount 多）
+  const top3Workspaces = [...workspaces]
+    .sort((a, b) => (b.workspace.riskScore + b.pendingActionCount * 5) - (a.workspace.riskScore + a.pendingActionCount * 5))
+    .slice(0, 3)
+
+  // 实时 ticker：从真实运行战场的 aiSummary 生成
+  const tickerItems = activeWorkspaces
+    .filter(ws => ws.aiSummary?.outputSummary)
+    .map(ws => `${AGENT_TYPE_LABELS[ws.aiSummary!.agentType] ?? ws.aiSummary!.agentType} Agent · ${ws.opportunity?.name ?? '未命名'} · ${ws.aiSummary!.outputSummary!.slice(0, 30)}`)
+  const liveTickerText = tickerItems.length > 0 ? tickerItems[0] : (data?.runningAgentCount ?? 0) > 0 ? `${data!.runningAgentCount} 个 Agent 正在运行` : 'Agent 待命中'
 
   // ─── 加载态 ────────────────────────────────────────────────────────────────
 
@@ -199,7 +217,7 @@ export default function DashboardPage() {
         <div className="w-px h-3 bg-slate-700" />
         <span className="text-xs text-slate-600">采纳率 <span className="text-indigo-400 font-medium">{data.acceptRate}%</span></span>
         <div className="ml-auto flex items-center gap-1.5 text-xs text-slate-600">
-          <span key={tickerIdx} className="fadein-up">{TICKER_ITEMS[tickerIdx]}</span>
+          <span className="fadein-up">{liveTickerText}</span>
         </div>
       </div>
 
@@ -371,8 +389,9 @@ export default function DashboardPage() {
           <div className="px-4 pb-2 flex-1">
             <p className="text-[10px] text-slate-600 mb-2 uppercase tracking-wider">数字员工矩阵</p>
             <div className="grid grid-cols-4 gap-1.5">
-              {ALL_AGENT_NODES.map((agent, i) => {
-                const isActive = i === agentPulseIdx
+              {ALL_AGENT_NODES.map((agent) => {
+                const agentTypeKey = Object.entries(AGENT_TYPE_LABELS).find(([, v]) => v + ' Agent' === agent.label || v === agent.label.replace(' Agent', ''))?.[0]
+                const isActive = agentTypeKey ? runningAgentTypes.has(agentTypeKey) : false
                 const agentData = data.agentEffectiveness.find(a => a.agentLabel === agent.label)
                 return (
                   <div key={agent.label}
@@ -383,11 +402,20 @@ export default function DashboardPage() {
                     }}
                   >
                     <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: isActive ? agent.color : agent.color + '60', boxShadow: isActive ? `0 0 5px ${agent.color}` : 'none' }} />
+                      {isActive ? (
+                        <span className="relative flex w-1.5 h-1.5 shrink-0">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: agent.color }} />
+                          <span className="relative inline-flex rounded-full w-1.5 h-1.5" style={{ backgroundColor: agent.color }} />
+                        </span>
+                      ) : (
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: agent.color + '60' }} />
+                      )}
                       <span className="text-[10px] truncate font-medium" style={{ color: isActive ? agent.color : '#64748b' }}>{agent.label}</span>
                     </div>
-                    {agentData && agentData.totalRuns > 0 ? (
-                      <span className="text-[9px] font-mono" style={{ color: isActive ? agent.color + 'aa' : '#475569' }}>{agentData.acceptRate}% 采纳</span>
+                    {isActive ? (
+                      <span className="text-[9px]" style={{ color: agent.color + 'cc' }}>运行中</span>
+                    ) : agentData && agentData.totalRuns > 0 ? (
+                      <span className="text-[9px] font-mono" style={{ color: '#475569' }}>{agentData.acceptRate}% 采纳</span>
                     ) : (
                       <span className="text-[9px]" style={{ color: '#334155' }}>待命</span>
                     )}
@@ -557,27 +585,33 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* 高风险战场 */}
+          {/* 今日需关注 Top3 */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-medium text-slate-400">高风险战场</p>
+              <p className="text-xs font-medium text-slate-400">今日需关注</p>
               <Link href="/workspace" className="text-xs text-slate-600 hover:text-slate-400">全部 →</Link>
             </div>
-            {data.highRiskWorkspaces.length === 0 ? (
-              <p className="text-xs text-slate-600 py-2 text-center">暂无高风险商机</p>
-            ) : data.highRiskWorkspaces.map(w => (
-              <Link key={w.id} href={`/workspace/${w.id}`} className="flex items-center justify-between py-1.5 hover:bg-slate-800 rounded px-1 -mx-1 group">
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
-                  </span>
-                  <span className="text-xs text-slate-300 truncate max-w-[100px]">{w.name}</span>
+            {top3Workspaces.length === 0 ? (
+              <p className="text-xs text-slate-600 py-2 text-center">暂无商机数据</p>
+            ) : top3Workspaces.map((w, idx) => (
+              <Link key={w.workspace.id} href={`/workspace/${w.workspace.id}`} className="block py-2 border-b border-slate-800/60 last:border-0 hover:bg-slate-800/40 rounded px-1 -mx-1 group">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-mono text-slate-600">#{idx + 1}</span>
+                    <span className="text-xs text-slate-300 truncate max-w-[110px]">{w.opportunity?.name ?? '未命名'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`text-xs font-bold ${healthScoreColor(w.workspace.healthScore)}`}>{Math.round(w.workspace.healthScore)}</span>
+                    {w.pendingActionCount > 0 && (
+                      <span className="text-[10px] text-amber-400 font-medium">{w.pendingActionCount}待审</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className={`text-xs font-bold ${healthScoreColor(w.healthScore)}`}>{Math.round(w.healthScore)}</span>
-                  <span className="text-xs text-red-400">风险{Math.round(w.riskScore)}</span>
-                </div>
+                {w.aiSummary?.outputSummary && (
+                  <p className="text-[10px] text-slate-500 leading-relaxed line-clamp-2 ml-4">
+                    {w.aiSummary.outputSummary}
+                  </p>
+                )}
               </Link>
             ))}
           </div>
@@ -710,7 +744,7 @@ export default function DashboardPage() {
           {/* Ticker */}
           <div className="hidden lg:flex items-center gap-1.5 text-xs max-w-xs overflow-hidden">
             <span className="text-slate-700">›</span>
-            <span key={tickerIdx} className="fadein-up truncate text-slate-500">{TICKER_ITEMS[tickerIdx]}</span>
+            <span className="fadein-up truncate text-slate-500">{liveTickerText}</span>
           </div>
           {/* 模式切换 */}
           <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">

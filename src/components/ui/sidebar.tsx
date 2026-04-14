@@ -2,13 +2,13 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Swords,
   LayoutDashboard,
   Bot,
-  BookOpen,
   ChevronDown,
+  ChevronRight,
   Settings,
   Cpu,
 } from 'lucide-react'
@@ -20,6 +20,7 @@ type NavItem = {
   hint?: string
   icon: React.ElementType
   primaryFor: UserRole[]
+  badge?: boolean  // 显示实时数字角标
 }
 
 type NavGroup = {
@@ -29,28 +30,22 @@ type NavGroup = {
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    groupLabel: '主价值流',
+    groupLabel: '工作台',
     items: [
-      { href: '/workspace', label: '商机作战空间',   hint: '各商机 Agent 协作 · 实时推进',  icon: Swords,         primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/workspace', label: '商机战场', icon: Swords, primaryFor: ['sales', 'solution', 'manager'] },
     ],
   },
   {
-    groupLabel: '赋能区',
+    groupLabel: '知识与能力',
     items: [
-      { href: '/assets',    label: '知识资产',      hint: '注入 AI 的方案、案例与话术',  icon: BookOpen, primaryFor: ['sales', 'solution', 'manager'] },
-      { href: '/evolution', label: 'Agent 能力中心', hint: '决策能力 · 行动能力',         icon: Cpu,      primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/assets',    label: '资产库',   icon: Cpu, primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/evolution', label: '能力进化', icon: Bot, primaryFor: ['sales', 'solution', 'manager'] },
     ],
   },
   {
-    groupLabel: '管理',
+    groupLabel: '经营',
     items: [
-      { href: '/dashboard', label: '经营概览', hint: '商机健康 · AI效率 · 赢单趋势', icon: LayoutDashboard, primaryFor: ['manager'] },
-    ],
-  },
-  {
-    groupLabel: '系统配置',
-    items: [
-      { href: '/settings', label: '连接器与模型', hint: '数据接入与大模型配置', icon: Settings, primaryFor: ['sales', 'solution', 'manager'] },
+      { href: '/dashboard', label: '经营快照', icon: LayoutDashboard, primaryFor: ['manager'] },
     ],
   },
 ]
@@ -66,6 +61,21 @@ export function Sidebar() {
   const pathname = usePathname()
   const { role, setRole } = useRole()
   const [showRolePicker, setShowRolePicker] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    const load = () => {
+      fetch('/api/actions?status=pending_approval&limit=1')
+        .then(r => r.json())
+        .then((d: { total?: number; actions?: unknown[] }) => {
+          setPendingCount(d.total ?? d.actions?.length ?? 0)
+        })
+        .catch(() => {})
+    }
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   return (
     <aside className="w-56 flex-shrink-0 bg-gray-900 text-gray-100 flex flex-col">
@@ -79,6 +89,18 @@ export function Sidebar() {
           </span>
         </div>
       </div>
+
+      {/* 全局审批角标（有待审批时显示） */}
+      {pendingCount > 0 && (
+        <Link
+          href="/intervention"
+          className="mx-3 mt-2 mb-1 flex items-center gap-2 px-3 py-2 bg-orange-500/10 border border-orange-500/30 rounded-lg text-xs text-orange-400 hover:bg-orange-500/20 transition-colors"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse flex-shrink-0" />
+          <span className="flex-1">{pendingCount} 项待审批</span>
+          <ChevronRight className="w-3 h-3 flex-shrink-0" />
+        </Link>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 py-3 px-2 overflow-y-auto space-y-3">
@@ -96,8 +118,9 @@ export function Sidebar() {
                 </p>
               )}
               <div className="space-y-0.5">
-                {visibleItems.map(({ href, label, hint, icon: Icon }) => {
+                {visibleItems.map(({ href, label, hint, icon: Icon, badge }) => {
                   const active = pathname === href || pathname.startsWith(href + '/')
+                  const badgeCount = badge ? pendingCount : 0
                   return (
                     <Link
                       key={href}
@@ -115,6 +138,11 @@ export function Sidebar() {
                           <div className="text-[10px] text-gray-500 leading-tight mt-0.5">{hint}</div>
                         )}
                       </div>
+                      {badgeCount > 0 && (
+                        <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center">
+                          {badgeCount > 99 ? '99+' : badgeCount}
+                        </span>
+                      )}
                     </Link>
                   )
                 })}
@@ -123,6 +151,21 @@ export function Sidebar() {
           )
         })}
       </nav>
+
+      {/* Settings 底部小入口 */}
+      <div className="px-2 pb-1 border-t border-gray-800 pt-2">
+        <Link
+          href="/settings"
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+            pathname.startsWith('/settings')
+              ? 'bg-gray-700 text-gray-100'
+              : 'text-gray-500 hover:bg-gray-800 hover:text-gray-300'
+          }`}
+        >
+          <Settings className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>连接器与模型</span>
+        </Link>
+      </div>
 
       {/* Role selector */}
       <div className="px-3 py-3 border-t border-gray-800">
@@ -159,7 +202,7 @@ export function Sidebar() {
           </div>
         )}
 
-        <p className="text-[11px] text-gray-600 mt-2 px-1">云艺化AI原生LTC v2.0</p>
+        <p className="text-[11px] text-gray-600 mt-2 px-1">云艺化AI原生LTC v3.1</p>
       </div>
     </aside>
   )

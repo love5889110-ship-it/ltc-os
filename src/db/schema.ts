@@ -622,3 +622,89 @@ export const riskEvents = pgTable('risk_events', {
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
+
+// ── 合同（Contracts）────────────────────────────────────────────────────────
+// 合同签订后登记，关联商机，记录金额/条款/付款节点
+// 状态机：draft → reviewing → signed → executing → completed → terminated
+
+export const contractStatusEnum = pgEnum('contract_status', [
+  'draft',       // 草稿阶段（谈判中）
+  'reviewing',   // 审查中（法务/商务审核）
+  'signed',      // 已签署
+  'executing',   // 执行中（付款节点进行中）
+  'completed',   // 全部回款完成
+  'terminated',  // 终止/违约
+])
+
+export const contracts = pgTable('contracts', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => opportunityWorkspaces.id),
+  opportunityId: text('opportunity_id').notNull().references(() => opportunities.id),
+  customerId: text('customer_id').notNull().references(() => customers.id),
+  contractNo: text('contract_no'),                          // 合同编号
+  title: text('title').notNull(),
+  status: contractStatusEnum('status').notNull().default('draft'),
+  totalAmount: real('total_amount'),                        // 合同总金额（元）
+  currency: text('currency').notNull().default('CNY'),
+  signedAt: timestamp('signed_at'),                         // 签署日期
+  effectiveAt: timestamp('effective_at'),                   // 生效日期
+  expiresAt: timestamp('expires_at'),                       // 到期日期
+  paymentTerms: text('payment_terms'),                      // 付款条款描述（自然语言）
+  deliveryTerms: text('delivery_terms'),                    // 交付条款描述
+  contractFileUrl: text('contract_file_url'),               // 合同文件 URL
+  reviewNote: text('review_note'),                          // 审查意见
+  ownerUserId: text('owner_user_id'),
+  createdBy: text('created_by'),                            // 'agent' 或人工姓名
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+// ── 回款记录（Payments）──────────────────────────────────────────────────────
+// 每笔应收/已收款项，关联合同
+// 状态机：scheduled → overdue / received
+
+export const paymentStatusEnum = pgEnum('payment_status', [
+  'scheduled',   // 计划中（未到期）
+  'overdue',     // 已逾期（超过 dueDate 未收款）
+  'received',    // 已到账
+  'waived',      // 已豁免（特殊情况）
+])
+
+export const payments = pgTable('payments', {
+  id: text('id').primaryKey(),
+  contractId: text('contract_id').notNull().references(() => contracts.id),
+  workspaceId: text('workspace_id').notNull().references(() => opportunityWorkspaces.id),
+  milestone: text('milestone').notNull(),                   // 付款节点名称（如"合同签署款30%"）
+  amount: real('amount').notNull(),                         // 应收金额（元）
+  percentage: real('percentage'),                           // 占合同总额百分比（如 30）
+  dueDate: timestamp('due_date'),                           // 应收日期
+  status: paymentStatusEnum('status').notNull().default('scheduled'),
+  receivedAmount: real('received_amount'),                  // 实际到账金额
+  receivedAt: timestamp('received_at'),                     // 实际到账日期
+  invoiceNo: text('invoice_no'),                            // 发票号
+  note: text('note'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+// ─── Rule Suggestions（规则候选，由 orchestrator 自动提炼）────────────────────
+
+export const ruleSuggestionStatusEnum = pgEnum('rule_suggestion_status', [
+  'pending',    // 待确认
+  'accepted',   // 已采纳（写入 agent_rules）
+  'dismissed',  // 已忽略
+])
+
+export const ruleSuggestions = pgTable('rule_suggestions', {
+  id: text('id').primaryKey(),
+  sourceFeedbackId: text('source_feedback_id').references(() => feedbackSamples.id),
+  agentType: agentTypeEnum('agent_type').notNull(),
+  ruleType: ruleTypeEnum('rule_type').notNull().default('prefer'),
+  condition: text('condition').notNull(),      // 触发条件（自然语言）
+  instruction: text('instruction').notNull(), // 规则内容（自然语言）
+  rationale: text('rationale'),               // 为什么提炼这条规则
+  status: ruleSuggestionStatusEnum('status').notNull().default('pending'),
+  acceptedRuleId: text('accepted_rule_id').references(() => agentRules.id),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})

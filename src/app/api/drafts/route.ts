@@ -39,9 +39,15 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (action === 'approve') {
+    const recipientChannel = (draft.recipientInfo as { channel?: string } | null)?.channel
+    const isInternal = recipientChannel === 'internal' || recipientChannel === 'notify' || !recipientChannel && draft.draftType !== 'email'
+
+    // Internal drafts auto-advance to sent; external (email/customer-facing) stay approved for manual send
+    const nextStatus = isInternal ? 'sent' : 'approved'
+
     await db
       .update(drafts)
-      .set({ draftStatus: 'approved', reviewNote: reviewNote ?? null, updatedAt: new Date() })
+      .set({ draftStatus: nextStatus, reviewNote: reviewNote ?? null, updatedAt: new Date() })
       .where(eq(drafts.id, draftId))
 
     await db.insert(humanInterventions).values({

@@ -10,7 +10,7 @@
  * 本地测试：curl -H "Authorization: Bearer <CRON_SECRET>" http://localhost:3001/api/cron
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { runDailyReview, retryFailedActions } from '@/lib/orchestrator'
+import { runDailyReview, retryFailedActions, generateRuleSuggestions } from '@/lib/orchestrator'
 
 export async function GET(req: NextRequest) {
   // 验证来源：Vercel Cron 会附带 Authorization header，本地测试用 CRON_SECRET
@@ -36,6 +36,14 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     results.failedRetryError = String(err)
     console.error('[cron] failedRetry failed:', err)
+  }
+
+  try {
+    // 3. 规则候选自动提炼（扫描近 7 天 modified/rejected 样本）
+    results.ruleSuggestions = await generateRuleSuggestions(7)
+  } catch (err) {
+    results.ruleSuggestionsError = String(err)
+    console.error('[cron] generateRuleSuggestions failed:', err)
   }
 
   return NextResponse.json({

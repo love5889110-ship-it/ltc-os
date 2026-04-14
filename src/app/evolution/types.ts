@@ -6,7 +6,7 @@
 // ─── 页面级 Tab ────────────────────────────────────────────────────────────────
 
 export type CapabilityMode = 'decision' | 'action'
-export type EvolutionTab = 'feedback' | 'rules' | 'params' | 'config' | 'tracking'
+export type EvolutionTab = 'correction' | 'feedback' | 'rules' | 'params' | 'config' | 'tracking'
 
 // ─── 统计卡 ────────────────────────────────────────────────────────────────────
 

@@ -24,6 +24,7 @@ import {
   getActionSkills,
   getSkillAdapters,
   getSkillTestCases,
+  createGovernanceRule,
   getSkillBindings,
   getSkillRecommendations,
   addLogToFeedbackCandidate,
@@ -33,6 +34,7 @@ import { EvolutionCenterHeader } from './components/EvolutionCenterHeader'
 import { EvolutionStatsCards } from './components/EvolutionStatsCards'
 import { DecisionCapabilityPanel } from './components/decision/DecisionCapabilityPanel'
 import { ActionCapabilityPanel } from './components/action/ActionCapabilityPanel'
+import { RuleSuggestionsBanner } from './components/RuleSuggestionsBanner'
 
 const INITIAL_STATE: AgentCapabilityPageState = {
   stats: { feedbackCount: 0, adoptionRate: 0, adoptedCount: 0 },
@@ -55,7 +57,7 @@ const INITIAL_STATE: AgentCapabilityPageState = {
 
 export default function EvolutionPage() {
   const [capabilityMode, setCapabilityMode] = useState<CapabilityMode>('decision')
-  const [activeTab, setActiveTab] = useState<EvolutionTab>('feedback')
+  const [activeTab, setActiveTab] = useState<EvolutionTab>('correction')
   const [highlightSkillIds, setHighlightSkillIds] = useState<string[]>([])
   const [state, setState] = useState<AgentCapabilityPageState>(INITIAL_STATE)
   const [loading, setLoading] = useState(true)
@@ -113,6 +115,22 @@ export default function EvolutionPage() {
   // Feedback adopt/reject handlers with writeback
   const handleAdoptFeedback = useCallback(async (id: string, writebackTarget: WritebackTarget) => {
     await updateFeedbackStatus(id, 'adopted', writebackTarget)
+    // 真正写入规则库
+    if (writebackTarget === 'rule') {
+      setState((prev) => {
+        const sample = prev.feedbackSamples.find(s => s.id === id)
+        if (sample) {
+          createGovernanceRule({
+            agentType: 'coordinator',
+            ruleType: 'prefer',
+            condition: `场景类型: ${sample.sampleType ?? '通用'}`,
+            instruction: sample.outputSnapshot.slice(0, 200),
+            createdFrom: 'feedback',
+          }).catch(() => {})
+        }
+        return prev
+      })
+    }
     setState((prev) => {
       const samples = prev.feedbackSamples.map((s) =>
         s.id === id ? { ...s, feedbackType: 'adopted' as const, writebackTarget } : s
@@ -194,40 +212,44 @@ export default function EvolutionPage() {
 
         <EvolutionStatsCards stats={state.stats} />
 
-        <CapabilityModeTabs
-          mode={capabilityMode}
-          onChange={(mode) => setCapabilityMode(mode)}
-        />
+        <RuleSuggestionsBanner />
 
-        <div className="mt-4">
-          {capabilityMode === 'decision' ? (
-            <DecisionCapabilityPanel
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-              feedbackSamples={state.feedbackSamples}
-              onFeedbackSamplesChange={handleFeedbackSamplesChange}
-              onAdoptFeedback={handleAdoptFeedback}
-              onRejectFeedback={handleRejectFeedback}
-              rules={state.rules}
-              onRulesChange={handleRulesChange}
-              params={state.params}
-              onParamsChange={handleParamsChange}
-              configs={state.configs}
-              onConfigsChange={handleConfigsChange}
-              decisionResults={state.decisionResults}
-              decisionEvaluations={state.decisionEvaluations}
-              actionSkills={state.actionSkills}
-              onSkillHighlight={handleSkillHighlight}
-              loading={loading}
-            />
-          ) : (
-            <ActionCapabilityPanel
-              state={state}
-              highlightIds={highlightSkillIds}
-              onStateUpdate={patchState}
-              onAddToFeedback={handleAddToFeedback}
-            />
-          )}
+        {/* 纠偏工作台（默认）/ 高级工具（按需展开） */}
+        {capabilityMode === 'decision' ? (
+          <DecisionCapabilityPanel
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            feedbackSamples={state.feedbackSamples}
+            onFeedbackSamplesChange={handleFeedbackSamplesChange}
+            onAdoptFeedback={handleAdoptFeedback}
+            onRejectFeedback={handleRejectFeedback}
+            rules={state.rules}
+            onRulesChange={handleRulesChange}
+            params={state.params}
+            onParamsChange={handleParamsChange}
+            configs={state.configs}
+            onConfigsChange={handleConfigsChange}
+            decisionResults={state.decisionResults}
+            decisionEvaluations={state.decisionEvaluations}
+            actionSkills={state.actionSkills}
+            onSkillHighlight={handleSkillHighlight}
+            loading={loading}
+          />
+        ) : (
+          <ActionCapabilityPanel
+            state={state}
+            highlightIds={highlightSkillIds}
+            onStateUpdate={patchState}
+            onAddToFeedback={handleAddToFeedback}
+          />
+        )}
+
+        {/* 行动能力（工具调试）— 折叠在底部 */}
+        <div className="pt-2 border-t border-slate-800">
+          <CapabilityModeTabs
+            mode={capabilityMode}
+            onChange={(mode) => setCapabilityMode(mode)}
+          />
         </div>
       </div>
     </div>

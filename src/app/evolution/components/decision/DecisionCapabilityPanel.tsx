@@ -69,6 +69,73 @@ export function DecisionCapabilityPanel({
         activeRulesCount={activeRulesCount}
       />
 
+      {activeTab === 'correction' && (
+        <div className="space-y-5">
+          {/* 待纠偏样本：只展示 modified/rejected（映射为 pending/rejected） */}
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-mono mb-2">
+              待处理的纠偏样本
+              {feedbackSamples.filter(s => s.feedbackType === 'pending' || s.feedbackType === 'rejected').length > 0 && (
+                <span className="ml-2 bg-amber-500 text-amber-950 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                  {feedbackSamples.filter(s => s.feedbackType === 'pending' || s.feedbackType === 'rejected').length}
+                </span>
+              )}
+            </p>
+            {feedbackSamples.filter(s => s.feedbackType === 'pending' || s.feedbackType === 'rejected').length === 0 ? (
+              <p className="text-slate-500 text-xs px-1">暂无待处理的纠偏样本。当 AI 的动作被人工修改或驳回时，样本会自动出现在这里。</p>
+            ) : (
+              <FeedbackSampleList
+                samples={feedbackSamples.filter(s => s.feedbackType === 'pending' || s.feedbackType === 'rejected')}
+                loading={loading}
+                onSelect={setSelectedSample}
+              />
+            )}
+            <FeedbackSampleDetailDrawer
+              sample={selectedSample}
+              onClose={() => setSelectedSample(null)}
+              onAdopt={onAdoptFeedback}
+              onReject={onRejectFeedback}
+            />
+          </div>
+
+          {/* 规则库摘要 */}
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-mono mb-2">
+              当前生效规则
+              {activeRulesCount > 0 && (
+                <span className="ml-2 text-blue-400 font-bold">{activeRulesCount} 条</span>
+              )}
+            </p>
+            {rules.filter(r => r.status === 'active').length === 0 ? (
+              <p className="text-slate-500 text-xs px-1">暂无生效规则。采纳纠偏建议后，规则会自动写入并对 AI 生效。</p>
+            ) : (
+              <div className="space-y-1.5">
+                {rules.filter(r => r.status === 'active').slice(0, 5).map(r => (
+                  <div key={r.id} className="flex items-start gap-2 bg-slate-800/60 rounded-lg px-3 py-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0 mt-0.5 ${
+                      r.ruleType === 'forbid' ? 'bg-red-900/60 text-red-400' :
+                      r.ruleType === 'require' ? 'bg-blue-900/60 text-blue-400' :
+                      'bg-amber-900/60 text-amber-400'
+                    }`}>
+                      {r.ruleType === 'forbid' ? '禁止' : r.ruleType === 'require' ? '必须' : '建议'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-slate-400">当：{r.condition}</p>
+                      <p className="text-xs text-slate-200 mt-0.5">{r.instruction}</p>
+                    </div>
+                  </div>
+                ))}
+                {rules.filter(r => r.status === 'active').length > 5 && (
+                  <button onClick={() => onTabChange('rules')} className="text-xs text-indigo-400 hover:text-indigo-300 px-1">
+                    查看全部 {rules.filter(r => r.status === 'active').length} 条规则 →
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {activeTab === 'feedback' && (
         <div className="space-y-3">
           <FeedbackFilterBar

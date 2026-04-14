@@ -225,11 +225,14 @@ async function callRpaServer(
       message: 'RPA 服务未配置，请在环境变量 RPA_SERVER_URL 中设置机器地址（如 http://192.168.1.100:8000）',
     }
   }
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001'
+  const callbackUrl = `${appUrl}/api/rpa-callback`
+
   try {
     const res = await fetch(`${rpaUrl}/api/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskType, taskParams }),
+      body: JSON.stringify({ taskType, taskParams, callbackUrl }),
     })
     const json = await res.json() as {
       taskExecutionId?: string

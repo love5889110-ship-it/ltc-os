@@ -521,47 +521,24 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
           {/* ── 左主区（2列）── */}
           <div className="col-span-2 flex flex-col gap-0">
 
-            {/* ── Tab 导航 ── */}
-            <div className="bg-white rounded-t-xl border border-b-0 px-4 pt-3 pb-0 flex items-center gap-1">
-              {([
-                { key: 'situation',    label: '当前态势',    badge: null },
-                { key: 'agents',       label: 'Agent 协作',  badge: null },
-                { key: 'decisions',    label: '待你决策',    badge: pendingActions.length > 0 ? pendingActions.length : null },
-                { key: 'deliverables', label: '成果物',      badge: deliverablesList.filter(d => d.status !== 'archived').length > 0 ? deliverablesList.filter(d => d.status !== 'archived').length : null },
-                { key: 'outputs',      label: '草稿与任务',  badge: null },
-                { key: 'signals',      label: '信号流',      badge: recentSignals?.length ?? null },
-              ] as { key: typeof activeTab; label: string; badge: number | null }[]).map(({ key, label, badge }) => (
-                <button
-                  key={key}
-                  onClick={() => setActiveTab(key)}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-t-lg transition-colors border-b-2 ${
-                    activeTab === key
-                      ? 'border-blue-600 text-blue-700 font-medium bg-blue-50/50'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  {label}
-                  {badge !== null && badge > 0 && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                      key === 'decisions' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'
-                    }`}>{badge}</span>
-                  )}
-                </button>
-              ))}
-            </div>
+            {/* ── 单页垂直流（无Tab）── */}
 
-            {/* ── Tab 内联说明 ── */}
-            <div className="bg-gray-50 border border-b-0 px-4 py-2">
-              {activeTab === 'situation'    && <p className="text-xs text-gray-400">系统对该商机的当前理解 · 关键风险与机会 · 下一步行动建议</p>}
-              {activeTab === 'agents'      && <p className="text-xs text-gray-400">AI 数字员工正在处理这个商机 · 可查看判断过程、手动触发或重新运行</p>}
-              {activeTab === 'decisions'   && <p className="text-xs text-gray-400">以下动作由 AI 提出，需要你审批后执行 · 通过=AI代你执行 · 驳回=告知AI原因并训练</p>}
-              {activeTab === 'deliverables'&& <p className="text-xs text-gray-400">AI 生成的对外成果物 · 包括方案PPT、效果图、标书草稿、合同意见等 · 审批后可对外发送</p>}
-              {activeTab === 'outputs'     && <p className="text-xs text-gray-400">AI 生成的对外草稿和待完成任务 · 处理后可帮助 AI 持续学习你的偏好</p>}
-              {activeTab === 'signals'     && <p className="text-xs text-gray-400">流入这个战场的所有信号，按时间排列 · 是 AI 做出判断的原始依据</p>}
-            </div>
+            {/* 顶部快捷导航：有待决策时突出显示 */}
+            {pendingActions.length > 0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
+                  <span className="text-sm font-medium text-orange-800">有 <strong>{pendingActions.length}</strong> 项动作等待你的审批</span>
+                </div>
+                <a href="#section-decisions" className="text-xs text-orange-600 font-medium hover:underline">立即查看 ↓</a>
+              </div>
+            )}
 
-            {/* ── Tab: 当前态势 ── */}
-            <div className={activeTab === 'situation' ? '' : 'hidden'}>
+            {/* ── Section: 当前态势 ── */}
+            <div className="flex items-center gap-2 px-1 mb-1 mt-2">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">当前态势</span>
+            </div>
+            <div className="" id="section-situation">
               <div className="bg-white border border-t-0 rounded-b-xl divide-y">
 
                 {/* A. 系统整体理解 */}
@@ -741,7 +718,10 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             </div>
 
             {/* ── Tab 1: Agent 协作 ── */}
-            <div className={`space-y-4 ${activeTab === 'agents' ? '' : 'hidden'}`}>
+            <div className="flex items-center gap-2 px-1 mb-1 mt-4">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">数字员工协作</span>
+            </div>
+            <div className="space-y-4">
               <div className="bg-white border border-t-0 rounded-b-xl p-4 space-y-4">
 
             {/* ── 销售总控 Agent ── */}
@@ -1307,7 +1287,10 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             </div>{/* end Tab1 space-y-4 */}
 
             {/* ── Tab: 成果物 ── */}
-            <div className={activeTab === 'deliverables' ? '' : 'hidden'}>
+            <div className="flex items-center gap-2 px-1 mb-1 mt-4">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">成果物</span>
+            </div>
+            <div className="">
               <div className="bg-white border border-t-0 rounded-b-xl">
                 {deliverablesList.length === 0 ? (
                   <div className="px-4 py-10 text-center">
@@ -1640,7 +1623,14 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             </div>
 
             {/* ── Tab 2: 待你决策 ── */}
-            <div className={activeTab === 'decisions' ? '' : 'hidden'}>
+            <div className="flex items-center gap-2 px-1 mb-1 mt-4" id="section-decisions">
+              <span className="w-2 h-2 rounded-full bg-orange-400 flex-shrink-0" />
+              <span className="text-sm font-semibold text-gray-800">需要你决策</span>
+              {pendingActions.length > 0 && (
+                <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">{pendingActions.length} 件</span>
+              )}
+            </div>
+            <div className="">
               <div className="bg-white border border-t-0 rounded-b-xl">
                 {pendingActions.length === 0 ? (
                   <div className="px-4 py-10 text-center text-gray-400 text-sm">暂无待审批动作 · AI 正在持续监控，有新判断会自动出现</div>
@@ -1742,7 +1732,7 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             </div>
 
             {/* ── Tab 3: 草稿与任务 ── */}
-            <div className={activeTab === 'outputs' ? '' : 'hidden'}>
+            <div className="">
               <div className="bg-white border border-t-0 rounded-b-xl px-4 py-6 space-y-3">
                 <Link href={`/drafts?workspaceId=${id}`} className="flex items-center justify-between p-3 rounded-lg border hover:bg-gray-50">
                   <div className="flex items-center gap-2">
@@ -1764,7 +1754,7 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             </div>
 
             {/* ── Tab 4: 信号流 ── */}
-            <div className={activeTab === 'signals' ? '' : 'hidden'}>
+            <div className="">
               <div className="bg-white border border-t-0 rounded-b-xl">
                 {!recentSignals || recentSignals.length === 0 ? (
                   <div className="px-4 py-10 text-center text-gray-400 text-sm">暂无关联信号 · 信号录入后会自动绑定并出现在这里</div>

@@ -6,10 +6,12 @@
  *  3. rule   — 规则触发（满足条件时自动触发，由 cron 扫描执行）
  */
 import { db } from '@/db'
-import { opportunityWorkspaces, agentThreads, agentRuns, agentActions } from '@/db/schema'
-import { eq, and, lt, isNull, inArray } from 'drizzle-orm'
+import { opportunityWorkspaces, agentThreads, agentRuns, agentActions, feedbackSamples, agentRules, ruleSuggestions } from '@/db/schema'
+import { eq, and, lt, isNull, inArray, notInArray } from 'drizzle-orm'
 import { runAgent, createOrGetThread } from '@/lib/agent-runtime'
 import { getAgentsForStage } from '@/lib/stage-engine'
+import { minimaxChat } from '@/lib/minimax'
+import { generateId } from '@/lib/utils'
 
 // ─── 类型 ────────────────────────────────────────────────────────────────────
 
@@ -109,4 +111,99 @@ export async function retryFailedActions(): Promise<{ retried: number }> {
   }
 
   return { retried }
+}
+
+/**
+ * 规则候选自动提炼：
+ * 扫描近 N 天内被「修改」或「驳回」且尚未提炼的 feedbackSamples，
+ * 用 MiniMax 生成规则候选写入 rule_suggestions 表，供人工一键确认。
+ */
+export async function generateRuleSuggestions(lookbackDays = 7): Promise<{ generated: number; skipped: number }> {
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000)
+
+  // 找出已提炼过的 feedbackSample id（避免重复提炼）
+  const existing = await db.query.ruleSuggestions.findMany({
+    where: (s, { isNotNull }) => isNotNull(s.sourceFeedbackId),
+  })
+  const alreadyProcessed = new Set(existing.map((s) => s.sourceFeedbackId).filter(Boolean))
+
+  // 找出近 N 天 modified/rejected 且 reusable 的样本
+  const samples = await db.query.feedbackSamples.findMany({
+    where: (f, { and, inArray, gte }) =>
+      and(
+        inArray(f.feedbackLabel, ['modified', 'rejected']),
+        gte(f.createdAt, since)
+      ),
+    orderBy: (f, { desc }) => [desc(f.createdAt)],
+    limit: 20,
+  })
+
+  const toProcess = samples.filter((s) => !alreadyProcessed.has(s.id))
+  let generated = 0
+  let skipped = 0
+
+  for (const sample of toProcess) {
+    if (!sample.agentType) { skipped++; continue }
+
+    try {
+      const originalStr = JSON.stringify(sample.originalOutputJson ?? {}, null, 2).slice(0, 800)
+      const correctedStr = JSON.stringify(sample.correctedOutputJson ?? {}, null, 2).slice(0, 800)
+      const scenarioHint = sample.scenarioType ? `动作类型：${sample.scenarioType}` : ''
+      const labelHint = sample.feedbackLabel === 'modified' ? '人工修改了AI的输出' : '人工驳回了AI的输出'
+
+      const prompt = `你是一个 AI 销售系统的规则提炼专家。
+以下是一条人工纠偏记录（${labelHint}）：
+${scenarioHint}
+原始 AI 输出：
+${originalStr}
+
+人工修改后（或驳回原因）：
+${correctedStr}
+
+请从中提炼一条可复用的行动规则，用 JSON 格式输出，字段：
+- ruleType: "forbid" | "require" | "prefer"
+- condition: 触发条件（简洁自然语言，20字以内）
+- instruction: 规则指令（AI 下次遇到此情形应该怎么做，50字以内）
+- rationale: 提炼理由（一句话，说明为何需要这条规则）
+
+只输出 JSON，不要其他内容。`
+
+      const raw = await minimaxChat({
+        system: '你是规则提炼专家，只输出合法 JSON。',
+        user: prompt,
+        maxTokens: 256,
+      })
+
+      let parsed: { ruleType?: string; condition?: string; instruction?: string; rationale?: string }
+      try {
+        const jsonMatch = raw.match(/\{[\s\S]*\}/)
+        parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+      } catch {
+        skipped++
+        continue
+      }
+
+      if (!parsed.condition || !parsed.instruction) { skipped++; continue }
+
+      const validRuleTypes = ['forbid', 'require', 'prefer']
+      const ruleType = validRuleTypes.includes(parsed.ruleType ?? '') ? parsed.ruleType as 'forbid' | 'require' | 'prefer' : 'prefer'
+
+      await db.insert(ruleSuggestions).values({
+        id: generateId(),
+        sourceFeedbackId: sample.id,
+        agentType: sample.agentType,
+        ruleType,
+        condition: parsed.condition.slice(0, 200),
+        instruction: parsed.instruction.slice(0, 500),
+        rationale: parsed.rationale?.slice(0, 300) ?? null,
+        status: 'pending',
+      })
+      generated++
+    } catch (err) {
+      console.error(`[orchestrator] rule suggestion failed for sample ${sample.id}:`, err)
+      skipped++
+    }
+  }
+
+  return { generated, skipped }
 }

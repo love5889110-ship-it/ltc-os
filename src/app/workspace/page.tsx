@@ -5,9 +5,9 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   Swords, Plus, TrendingUp, AlertTriangle, Clock, Zap, RefreshCw,
-  LayoutGrid, GitBranch, Radio,
+  LayoutGrid, GitBranch, Radio, Users, Table2,
 } from 'lucide-react'
-import { healthScoreColor, formatRelativeTime } from '@/lib/utils'
+import { healthScoreColor, formatRelativeTime, AGENT_LABELS } from '@/lib/utils'
 import { PageGuide } from '@/components/ui/page-guide'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
 
@@ -35,6 +35,8 @@ interface WorkspaceItem {
   } | null
   pendingActionCount: number
   runningAgentCount: number
+  agentStatuses: { agentType: string; status: string; lastActiveAt: string | null }[]
+  aiSummary: { outputSummary: string | null; agentType: string; startedAt: string | null } | null
 }
 
 // ── 流水线视图数据类型 ─────────────────────────────────────
@@ -66,7 +68,9 @@ function WorkspacePageInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const viewParam = searchParams.get('view')
-  const [view, setView] = useState<'cards' | 'pipeline'>(viewParam === 'pipeline' ? 'pipeline' : 'cards')
+  const [view, setView] = useState<'matrix' | 'cards' | 'pipeline'>(
+    viewParam === 'pipeline' ? 'pipeline' : viewParam === 'cards' ? 'cards' : 'matrix'
+  )
 
   // 卡片视图状态
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([])
@@ -87,6 +91,8 @@ function WorkspacePageInner() {
   // 信号输入 + 全局待处理
   const [pendingTotal, setPendingTotal] = useState(0)
   const [pendingByWorkspace, setPendingByWorkspace] = useState<{ name: string; count: number; id: string }[]>([])
+  const [runningAgentTotal, setRunningAgentTotal] = useState(0)
+  const [riskWorkspaceCount, setRiskWorkspaceCount] = useState(0)
 
   useEffect(() => {
     fetch('/api/workspaces')
@@ -104,6 +110,11 @@ function WorkspacePageInner() {
           .sort((a, b) => b.count - a.count)
           .slice(0, 5)
         setPendingByWorkspace(byWs)
+        // 全局运转中Agent数 + 高风险商机数
+        const runningTotal = ws.reduce((sum, w) => sum + w.runningAgentCount, 0)
+        setRunningAgentTotal(runningTotal)
+        const riskCount = ws.filter(w => (w.workspace.riskScore ?? 0) > 50).length
+        setRiskWorkspaceCount(riskCount)
       })
   }, [])
 
@@ -116,9 +127,9 @@ function WorkspacePageInner() {
     }
   }, [view, pipelineItems.length])
 
-  const switchView = (v: 'cards' | 'pipeline') => {
+  const switchView = (v: 'matrix' | 'cards' | 'pipeline') => {
     setView(v)
-    router.replace(v === 'pipeline' ? '/workspace?view=pipeline' : '/workspace', { scroll: false })
+    router.replace(v === 'pipeline' ? '/workspace?view=pipeline' : v === 'cards' ? '/workspace?view=cards' : '/workspace', { scroll: false })
   }
 
   const loadOpportunities = async () => {
@@ -173,8 +184,7 @@ function WorkspacePageInner() {
   return (
     <div className={`flex flex-col ${view === 'pipeline' ? 'h-full' : ''}`}>
       {/* Page header */}
-      <div className="bg-white border-b px-6 py-4 flex-shrink-0">
-        <Breadcrumb items={[{ label: '主价值流' }, { label: '商机作战空间' }]} />
+      <div className="bg-white border-b px-6 py-4 flex-shrink-0">        <Breadcrumb items={[{ label: '主价值流' }, { label: '商机作战空间' }]} />
         <PageGuide
           storageKey="workspace"
           contents={{
@@ -208,14 +218,40 @@ function WorkspacePageInner() {
           }}
         />
 
-        {/* 全局待处理汇总 */}
-        {pendingTotal > 0 && (
-          <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 mb-3 flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-orange-700">
-              <Zap className="w-3.5 h-3.5" />
-              共 <span className="font-bold">{pendingTotal}</span> 件事等你决策
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
+        {/* 全局系统状态横条 — 始终显示 */}
+        <div className={`rounded-xl px-4 py-2.5 mb-3 flex items-center gap-4 flex-wrap text-xs ${
+          pendingTotal > 0 ? 'bg-orange-50 border border-orange-200' : 'bg-gray-50 border border-gray-200'
+        }`}>
+          {/* 运转中 */}
+          <div className="flex items-center gap-1.5">
+            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${runningAgentTotal > 0 ? 'bg-blue-400 animate-pulse' : 'bg-gray-300'}`} />
+            <span className={runningAgentTotal > 0 ? 'text-blue-700 font-medium' : 'text-gray-500'}>
+              {runningAgentTotal > 0 ? `${runningAgentTotal} 个数字员工运转中` : '暂无 Agent 运行'}
+            </span>
+          </div>
+          <span className="text-gray-300">·</span>
+          {/* 待决策 */}
+          <div className="flex items-center gap-1.5">
+            <Zap className={`w-3.5 h-3.5 ${pendingTotal > 0 ? 'text-orange-500' : 'text-gray-400'}`} />
+            {pendingTotal > 0 ? (
+              <span className="text-orange-700 font-medium">{pendingTotal} 件等你决策</span>
+            ) : (
+              <span className="text-gray-500">无待审批</span>
+            )}
+          </div>
+          <span className="text-gray-300">·</span>
+          {/* 风险商机 */}
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className={`w-3.5 h-3.5 ${riskWorkspaceCount > 0 ? 'text-red-500' : 'text-gray-400'}`} />
+            {riskWorkspaceCount > 0 ? (
+              <span className="text-red-700 font-medium">{riskWorkspaceCount} 个商机高风险</span>
+            ) : (
+              <span className="text-gray-500">无高风险商机</span>
+            )}
+          </div>
+          {/* 快速跳转待审批链接 */}
+          {pendingTotal > 0 && (
+            <div className="flex items-center gap-1.5 ml-auto flex-wrap">
               {pendingByWorkspace.map(ws => (
                 <a
                   key={ws.id}
@@ -226,8 +262,8 @@ function WorkspacePageInner() {
                 </a>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -247,8 +283,14 @@ function WorkspacePageInner() {
             {/* 视图切换 */}
             <div className="flex border rounded-lg overflow-hidden text-xs">
               <button
+                onClick={() => switchView('matrix')}
+                className={`flex items-center gap-1 px-3 py-1.5 transition-colors ${view === 'matrix' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <Table2 className="w-3.5 h-3.5" />矩阵
+              </button>
+              <button
                 onClick={() => switchView('cards')}
-                className={`flex items-center gap-1 px-3 py-1.5 transition-colors ${view === 'cards' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                className={`flex items-center gap-1 px-3 py-1.5 border-l transition-colors ${view === 'cards' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
               >
                 <LayoutGrid className="w-3.5 h-3.5" />卡片
               </button>
@@ -267,8 +309,7 @@ function WorkspacePageInner() {
               >
                 <Plus className="w-4 h-4" />新建战场
               </button>
-            )}
-          </div>
+            )}          </div>
         </div>
 
         {/* 卡片视图工具栏 */}
@@ -318,6 +359,138 @@ function WorkspacePageInner() {
         )}
       </div>
 
+      {/* ── 矩阵视图 ─────────────────────────────── */}
+      {view === 'matrix' && (
+        <div className="flex-1 overflow-auto">
+          {loadingCards ? (
+            <div className="text-center py-16 text-gray-400 text-sm">加载中...</div>
+          ) : sortedCards.length === 0 ? (
+            <div className="text-center py-16">
+              <Swords className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+              <p className="text-gray-500 text-sm">还没有商机</p>
+            </div>
+          ) : (
+            <div className="min-w-max">
+              {/* 矩阵表头 */}
+              <div className="sticky top-0 bg-gray-50 border-b z-10 flex text-xs font-medium text-gray-500">
+                <div className="w-72 flex-shrink-0 px-4 py-3 border-r">战场 · 商机</div>
+                <div className="w-20 flex-shrink-0 px-3 py-3 border-r text-center">总控</div>
+                <div className="w-20 flex-shrink-0 px-3 py-3 border-r text-center">销售</div>
+                <div className="w-20 flex-shrink-0 px-3 py-3 border-r text-center">方案</div>
+                <div className="w-20 flex-shrink-0 px-3 py-3 border-r text-center">招标</div>
+                <div className="w-20 flex-shrink-0 px-3 py-3 border-r text-center">交付</div>
+                <div className="w-20 flex-shrink-0 px-3 py-3 border-r text-center">服务</div>
+                <div className="w-28 flex-shrink-0 px-3 py-3 text-center text-orange-500">待你审批</div>
+              </div>
+
+              {/* 矩阵行 */}
+              {sortedCards.map((item) => {
+                const { workspace, opportunity, customer, pendingActionCount, agentStatuses, aiSummary } = item
+                const hasRunning = agentStatuses.some(a => a.status === 'running')
+                const MATRIX_AGENTS = ['coordinator', 'sales', 'presales_assistant', 'tender_assistant', 'handover', 'service_triage']
+                const AGENT_SHORT: Record<string, string> = {
+                  coordinator: '总控', sales: '销售', presales_assistant: '方案',
+                  tender_assistant: '招标', handover: '交付', service_triage: '服务',
+                }
+                return (
+                  <div
+                    key={workspace.id}
+                    className={`flex border-b hover:bg-blue-50/20 transition-colors ${hasRunning ? 'border-l-2 border-l-blue-400' : 'border-l-2 border-l-transparent'}`}
+                  >
+                    {/* 战场名称列 */}
+                    <div className="w-72 flex-shrink-0 px-4 py-3 border-r">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <a
+                            href={`/workspace/${workspace.id}`}
+                            className="text-sm font-medium text-gray-900 hover:text-blue-600 line-clamp-1"
+                          >
+                            {opportunity?.name ?? '未知商机'}
+                          </a>
+                          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-gray-400">
+                            <span>{customer?.name ?? '—'}</span>
+                            <span>·</span>
+                            <span>{opportunity?.stage ?? workspace.currentStage ?? '—'}</span>
+                          </div>
+                        </div>
+                        <span className={`text-lg font-bold flex-shrink-0 ml-2 ${
+                          (workspace.healthScore ?? 0) >= 70 ? 'text-green-500' :
+                          (workspace.healthScore ?? 0) >= 50 ? 'text-amber-500' : 'text-red-500'
+                        }`}>{Math.round(workspace.healthScore ?? 0)}</span>
+                      </div>
+                      {/* AI 诊断句 */}
+                      {aiSummary?.outputSummary && (
+                        <p className="text-[11px] text-blue-600 mt-1.5 line-clamp-1 bg-blue-50 px-2 py-0.5 rounded">
+                          {aiSummary.outputSummary.slice(0, 45)}{aiSummary.outputSummary.length > 45 ? '...' : ''}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Agent 状态单元格 */}
+                    {MATRIX_AGENTS.map((agentType) => {
+                      const agentStatus = agentStatuses.find(a => a.agentType === agentType)
+                      const status = agentStatus?.status ?? 'none'
+                      return (
+                        <div
+                          key={agentType}
+                          className="w-20 flex-shrink-0 px-3 py-3 border-r flex flex-col items-center justify-center gap-1"
+                          title={`${AGENT_SHORT[agentType]} · ${status === 'running' ? '运行中' : status === 'idle' ? '待命' : status === 'error' ? '错误' : '未部署'}`}
+                        >
+                          {status === 'running' ? (
+                            <>
+                              <span className="relative flex h-2.5 w-2.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+                              </span>
+                              <span className="text-[9px] text-blue-500 font-medium">运行中</span>
+                            </>
+                          ) : status === 'idle' ? (
+                            <span className="h-2.5 w-2.5 rounded-full bg-gray-200" />
+                          ) : status === 'error' ? (
+                            <>
+                              <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
+                              <span className="text-[9px] text-red-400">错误</span>
+                            </>
+                          ) : (
+                            <span className="text-[9px] text-gray-300">—</span>
+                          )}
+                        </div>
+                      )
+                    })}
+
+                    {/* 待审批列 */}
+                    <div className="w-28 flex-shrink-0 px-3 py-3 flex items-center justify-center">
+                      {pendingActionCount > 0 ? (
+                        <a
+                          href={`/workspace/${workspace.id}`}
+                          className="flex items-center gap-1 bg-orange-50 border border-orange-200 text-orange-700 text-xs font-bold px-2.5 py-1 rounded-full hover:bg-orange-100 transition-colors"
+                        >
+                          <Zap className="w-3 h-3" />
+                          {pendingActionCount} 件
+                        </a>
+                      ) : (
+                        <span className="text-[10px] text-gray-300">—</span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+
+              {/* 图例 */}
+              <div className="bg-white border-t px-6 py-3 flex items-center gap-6 text-xs text-gray-400">
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" /></span>
+                  运行中
+                </div>
+                <div className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-gray-200" />待命</div>
+                <div className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-red-400" />异常</div>
+                <div className="flex items-center gap-1.5"><span className="h-0.5 w-3 bg-blue-400" />有Agent运行中的战场（左侧蓝线）</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── 卡片视图 ─────────────────────────────── */}
       {view === 'cards' && (
         <div className="flex-1 overflow-auto p-6">
@@ -331,77 +504,135 @@ function WorkspacePageInner() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {sortedCards.map((item) => {
-                const { workspace, opportunity, customer, pendingActionCount, runningAgentCount } = item
+                const { workspace, opportunity, customer, pendingActionCount, runningAgentCount, agentStatuses, aiSummary } = item
+                const activeAgents = agentStatuses.filter(a => a.status === 'running' || a.status === 'pending_approval')
+                const hasRunning = activeAgents.some(a => a.status === 'running')
+                const hasPending = activeAgents.some(a => a.status === 'pending_approval')
                 return (
                   <Link
                     key={workspace.id}
                     href={`/workspace/${workspace.id}`}
-                    className="relative bg-white rounded-xl border hover:shadow-md transition-shadow p-5 block"
+                    className="relative bg-white rounded-xl border hover:shadow-md transition-shadow block overflow-hidden"
                   >
-                    {pendingActionCount > 0 && (
-                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-tight z-10 whitespace-nowrap">
-                        {pendingActionCount} 待审
-                      </span>
-                    )}
+                    {/* 顶部状态色条 */}
+                    <div className={`h-1 w-full ${
+                      hasRunning ? 'bg-blue-400' :
+                      pendingActionCount > 0 ? 'bg-orange-400' :
+                      (workspace.riskScore ?? 0) > 50 ? 'bg-red-400' : 'bg-green-300'
+                    }`} />
 
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          {runningAgentCount > 0 && (
-                            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
-                          )}
-                          <p className="font-medium text-sm text-gray-900 line-clamp-1">
+                    <div className="p-4">
+                      {/* 行1: 商机名 + 健康分 */}
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-sm text-gray-900 line-clamp-1">
                             {opportunity?.name ?? '未知商机'}
                           </p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {customer?.name ?? '—'}
+                            {opportunity?.channelPartner && (
+                              <span className="ml-1.5">· {opportunity.channelPartner}</span>
+                            )}
+                          </p>
                         </div>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {customer?.name ?? '—'}
-                          {opportunity?.channelPartner && (
-                            <span className="text-gray-300 ml-1.5">· {opportunity.channelPartner}</span>
-                          )}
-                        </p>
+                        <div className="flex flex-col items-end ml-3 flex-shrink-0">
+                          <span className={`text-2xl font-bold leading-none ${healthScoreColor(workspace.healthScore ?? 0)}`}>
+                            {Math.round(workspace.healthScore ?? 0)}
+                          </span>
+                          <span className="text-[10px] text-gray-400 mt-0.5">健康分</span>
+                        </div>
                       </div>
-                      <div className="flex flex-col items-end ml-2 flex-shrink-0">
-                        <span className={`text-xl font-bold ${healthScoreColor(workspace.healthScore ?? 0)}`}>
-                          {Math.round(workspace.healthScore ?? 0)}
-                        </span>
-                        <span className="text-[10px] text-gray-400 leading-tight">健康分</span>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
-                        {opportunity?.stage ?? workspace.currentStage ?? '—'}
-                      </span>
-                      {(workspace.riskScore ?? 0) > 30 && (
-                        <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />
-                          风险 {Math.round(workspace.riskScore ?? 0)}
-                        </span>
+                      {/* 行2: Agent 状态行 */}
+                      <div className="flex items-center gap-1.5 mb-2.5 min-h-[22px]">
+                        {hasRunning ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+                            <span className="text-xs text-blue-600 font-medium truncate">
+                              {AGENT_LABELS[activeAgents.find(a => a.status === 'running')?.agentType ?? ''] ?? '数字员工'} 运行中...
+                            </span>
+                          </>
+                        ) : hasPending ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-orange-400 flex-shrink-0" />
+                            <span className="text-xs text-orange-600 font-medium">等待审批指令</span>
+                          </>
+                        ) : agentStatuses.length > 0 ? (
+                          <>
+                            <Users className="w-3 h-3 text-gray-300 flex-shrink-0" />
+                            <span className="text-xs text-gray-400">
+                              {agentStatuses.length} 个数字员工待命
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-gray-300">暂未部署 Agent</span>
+                        )}
+                        {pendingActionCount > 0 && (
+                          <span className="ml-auto flex-shrink-0 bg-orange-100 text-orange-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                            {pendingActionCount} 待审
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 行3: AI 最新诊断句 */}
+                      {aiSummary?.outputSummary ? (
+                        <div className="bg-blue-50 rounded-lg px-3 py-2 mb-2.5">
+                          <p className="text-xs text-blue-700 line-clamp-2 leading-relaxed">
+                            {aiSummary.outputSummary}
+                          </p>
+                          <p className="text-[10px] text-blue-400 mt-1">
+                            {AGENT_LABELS[aiSummary.agentType] ?? aiSummary.agentType} · {formatRelativeTime(aiSummary.startedAt)}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="bg-gray-50 rounded-lg px-3 py-2 mb-2.5">
+                          <p className="text-xs text-gray-400">暂无 AI 分析记录</p>
+                        </div>
                       )}
-                    </div>
 
-                    <div className="flex items-center justify-between text-xs text-gray-400">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1">
+                      {/* 行4: 价值链进度条 */}
+                      {(() => {
+                        const stage = opportunity?.stage ?? workspace.currentStage ?? ''
+                        const stageIdx = STAGES.indexOf(stage)
+                        return (
+                          <div className="mb-2.5">
+                            <div className="flex gap-0.5 mb-1">
+                              {STAGES.map((s, i) => (
+                                <div
+                                  key={s}
+                                  title={s}
+                                  className={`flex-1 h-1 rounded-full transition-colors`}
+                                  style={{ backgroundColor: i < stageIdx ? '#60a5fa' : i === stageIdx ? '#2563eb' : '#e5e7eb' }}
+                                />
+                              ))}
+                            </div>
+                            <div className="flex justify-between text-[9px] text-gray-400 px-0.5">
+                              <span>{STAGES[0]}</span>
+                              {stageIdx > 0 && stageIdx < STAGES.length - 1 && (
+                                <span className="text-blue-600 font-medium">{stage}</span>
+                              )}
+                              <span>{STAGES[STAGES.length - 1]}</span>
+                            </div>
+                          </div>
+                        )
+                      })()}
+
+                      {/* 行5: 底部元信息 */}
+                      <div className="flex items-center justify-between text-xs text-gray-400">
+                        <div className="flex items-center gap-1.5">
                           <TrendingUp className="w-3 h-3" />
                           {opportunity?.amount ? `¥${(opportunity.amount / 10000).toFixed(0)}万` : '—'}
+                          {(workspace.riskScore ?? 0) > 30 && (
+                            <span className="flex items-center gap-0.5 text-red-500 ml-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              风险 {Math.round(workspace.riskScore ?? 0)}
+                            </span>
+                          )}
                         </div>
-                        {pendingActionCount > 0 && (
-                          <span className="flex items-center gap-0.5 text-orange-500">
-                            <Zap className="w-3 h-3" />{pendingActionCount} 待审
-                          </span>
-                        )}
-                        {runningAgentCount > 0 && (
-                          <span className="flex items-center gap-0.5 text-blue-500">
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                            运行中 {runningAgentCount}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {formatRelativeTime(workspace.updatedAt)}
+                        <div className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {formatRelativeTime(workspace.updatedAt)}
+                        </div>
                       </div>
                     </div>
                   </Link>
